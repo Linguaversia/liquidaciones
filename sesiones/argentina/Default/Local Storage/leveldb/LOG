@@ -1,0 +1,4 @@
+2026/06/08-15:20:27.016 27f0 Creating DB C:\liquidaciones\sesiones\argentina\Default\Local Storage\leveldb since it was missing.
+2026/06/08-15:20:27.310 27f0 Reusing MANIFEST C:\liquidaciones\sesiones\argentina\Default\Local Storage\leveldb/MANIFEST-000001
+2026/06/08-15:39:35.218 27f0 Level-0 table #5: started
+2026/06/08-15:39:35.266 27f0 Level-0 table #5: 505325 bytes OK
