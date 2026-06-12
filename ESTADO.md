@@ -1,6 +1,6 @@
 # Estado del Proyecto — Liquidaciones
 
-**Fecha de última actualización:** 2026-06-11
+**Fecha de última actualización:** 2026-06-12
 
 ---
 
@@ -12,6 +12,13 @@
 - La lista de locales se obtiene automáticamente del endpoint `/contracts`: varía día a día según las nuevas captaciones del equipo comercial. No es necesario mantener ninguna lista manual.
 - Probado con ~142 locales. Corre sin intervención una vez que la sesión está guardada.
 - Sesión guardada en: `./sesiones/argentina.json`
+
+### Uber Eats — FUNCIONA
+
+- El motor navega a `merchants.ubereats.com/manager/reports`, crea un informe "Detalles del pago" para la semana anterior (lunes–domingo), selecciona todos los negocios (13), y descarga el archivo resultante.
+- El portal entrega el archivo en formato `.csv` (no XLSX). Ver sección de pendientes.
+- Sesión guardada en: `./sesiones/uber-argentina/sesion.json`
+- Para detalles técnicos del debugging y resolución de problemas, ver `UBER-DEBUGGING-LOG.md`.
 
 ### Rappi — DESCARGA CORRECTA (falta prueba multi-marca)
 
@@ -51,6 +58,32 @@ El script:
 
 ---
 
+### Uber Eats
+
+**Paso A — Login (solo la primera vez o si la sesión expira)**
+
+```
+node login-uber.js
+```
+
+Abre el navegador en `merchants.ubereats.com`. Hacé login a mano. Cuando el panel cargue, **cerrá el navegador**. La sesión se guarda automáticamente en `./sesiones/uber-argentina/sesion.json`.
+
+**Paso B — Descargar liquidaciones**
+
+```
+node descargar-uber.js
+```
+
+El script:
+1. Navega a Informes y abre el formulario de creación.
+2. Selecciona tipo "Detalles del pago" bajo el acordeón "Pagos".
+3. Selecciona todos los negocios (13).
+4. Selecciona el intervalo de la semana anterior (lunes–domingo).
+5. Envía el formulario y espera a que el informe esté disponible (polling cada 15 s, hasta 5 min).
+6. Descarga el archivo en `./descargas/uber-argentina/<fecha-de-hoy>/`.
+
+---
+
 ### Rappi
 
 **Paso A — Login (solo la primera vez o si la sesión expira)**
@@ -87,20 +120,27 @@ C:\liquidaciones\
 ├── descargar.js          # Descarga liquidaciones PedidosYa (todos los locales)
 ├── login-rappi.js        # Login Rappi (guarda sesión al cerrar el navegador)
 ├── descargar-rappi.js    # Descarga liquidaciones Rappi (Fase 1 + Fase 2)
+├── login-uber.js         # Login Uber Eats (guarda sesión al cerrar el navegador)
+├── descargar-uber.js     # Descarga liquidaciones Uber Eats (crea informe + descarga)
+├── UBER-DEBUGGING-LOG.md # Registro técnico del proceso de debugging de Uber
 │
 ├── package.json          # Dependencia: playwright ^1.60.0
 ├── package-lock.json
 │
 ├── sesiones/
-│   ├── argentina.json         # Sesión activa PedidosYa (2179718 bytes)
-│   ├── rappi-argentina.json   # Sesión activa Rappi (294561 bytes)
-│   └── argentina/             # Carpeta de perfil del navegador (Chromium)
+│   ├── argentina.json              # Sesión activa PedidosYa
+│   ├── rappi-argentina.json        # Sesión activa Rappi
+│   ├── argentina/                  # Carpeta de perfil del navegador (Chromium)
+│   └── uber-argentina/
+│       └── sesion.json             # Sesión activa Uber Eats
 │
 ├── descargas/            # Se crea automáticamente al correr los scripts
 │   ├── argentina/
 │   │   └── YYYY-MM-DD/   # ZIPs de PedidosYa (uno por local)
-│   └── rappi-argentina/
-│       └── YYYY-MM-DD/   # XLS de Rappi (Rappi_ID_Pago_<id>.xls por pago)
+│   ├── rappi-argentina/
+│   │   └── YYYY-MM-DD/   # XLS de Rappi (Rappi_ID_Pago_<id>.xls por pago)
+│   └── uber-argentina/
+│       └── YYYY-MM-DD/   # CSV de Uber Eats (nombre generado por el portal)
 │
 └── node_modules/         # Playwright instalado
 ```
@@ -119,6 +159,7 @@ Cuando algo falla, `descargar-rappi.js` genera screenshots automáticos en la ra
 
 ### Prioritario
 
+- [ ] **Uber — formato XLSX:** el portal entrega CSV por defecto. Investigar si el formulario tiene selector de formato o si se configura en el perfil de la cuenta. Ver `UBER-DEBUGGING-LOG.md` sección 5.
 - [ ] **Prueba multi-marca Rappi:** correr `descargar-rappi.js` con una cuenta que tenga 2+ marcas y verificar que el selector de marcas funciona (el código está escrito pero nunca se ejecutó ese camino en producción).
 - [ ] **Manejo de sesión expirada:** si `argentina.json` o `rappi-argentina.json` expiran, el script falla silenciosamente (navega pero no encuentra los datos). Habría que detectarlo y avisar claramente.
 
