@@ -138,46 +138,57 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
 
   // ─── Paso 3: Iterar sobre todas las marcas ───────────────
   // El endpoint paid-lot/by-stores es brand-filtered: solo devuelve la marca
-  // activa. Necesitamos abrir el selector de marcas y recorrerlas una a una.
+  // activa. Necesitamos abrir el chip "Marca:" en la barra de filtros y recorrer
+  // las opciones del dropdown que aparece (NO buscar texto en celdas de la tabla).
   const brandInicial = todosLosPagos[0]?.brand_name;
   console.log(`\nMarca activa inicial: "${brandInicial}"`);
+
+  // Helper: abre el chip "Marca:" y devuelve el locator del dropdown visible.
+  // Si no hay dropdown (solo una marca), devuelve null.
+  const abrirDropdownMarca = async () => {
+    const chipMarca = page
+      .locator('button, [role="button"], [class*="chip"], [class*="filter-item"], span')
+      .filter({ hasText: /marca/i })
+      .filter({ visible: true })
+      .first();
+    if (!await chipMarca.isVisible({ timeout: 5000 })) return null;
+    await chipMarca.click();
+    await page.waitForTimeout(1500);
+    // El dropdown aparece como listbox, dialog o menú flotante
+    const dropdown = page
+      .locator('[role="listbox"], [role="dialog"], [class*="dropdown__menu"], [class*="select__menu"], [class*="options-list"]')
+      .filter({ visible: true })
+      .last();
+    try {
+      await dropdown.waitFor({ state: 'visible', timeout: 3000 });
+      return dropdown;
+    } catch {
+      await page.keyboard.press('Escape');
+      return null;
+    }
+  };
+
   await page.screenshot({ path: './diagnostico-marcas.png', fullPage: false });
   console.log('  Screenshot del selector de marcas: ./diagnostico-marcas.png');
 
   let marcasEncontradas = [];
   try {
-    // El nombre de la marca activa aparece en la barra de filtros como botón/selector
-    const dropdownMarca = page.getByText(brandInicial, { exact: true })
-      .filter({ visible: true }).first();
+    const dropdown = await abrirDropdownMarca();
+    await page.screenshot({ path: './diagnostico-marcas-dropdown.png', fullPage: false });
+    console.log('  Screenshot del dropdown de marcas: ./diagnostico-marcas-dropdown.png');
 
-    if (await dropdownMarca.isVisible({ timeout: 5000 })) {
-      await dropdownMarca.click();
-      await page.waitForTimeout(1500);
-      await page.screenshot({ path: './diagnostico-marcas-dropdown.png', fullPage: false });
-      console.log('  Screenshot del dropdown de marcas: ./diagnostico-marcas-dropdown.png');
-
-      // Recopilar opciones (excluir "Todas" que cambia el modo de vista)
-      const opciones = page.locator('[role="option"], [role="listitem"], li')
-        .filter({ hasNotText: /^todas$/i });
-      const textos = (await opciones.allTextContents())
-        .map(t => t.trim()).filter(t => t.length > 0);
-
-      if (textos.length > 0) {
-        console.log(`  Marcas en dropdown (${textos.length}): ${textos.join(', ')}`);
-        marcasEncontradas = textos;
-      } else {
-        // Fallback: buscar cualquier li o option visible en el dropdown
-        const todasOpciones = await page.locator('[role="option"], li[class*="item"], li[class*="option"]').allTextContents();
-        marcasEncontradas = todasOpciones.map(t => t.trim()).filter(t => t && !/todas/i.test(t));
-        console.log(`  Marcas (fallback, ${marcasEncontradas.length}): ${marcasEncontradas.join(', ')}`);
-      }
-
-      // Cerrar sin seleccionar
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(500);
+    if (dropdown) {
+      const textos = (await dropdown.locator('[role="option"], li, label').filter({ visible: true }).allTextContents())
+        .map(t => t.trim())
+        .filter(t => t.length > 1 && !/^todas$/i.test(t));
+      console.log(`  Marcas en dropdown (${textos.length}): ${textos.join(', ')}`);
+      marcasEncontradas = textos;
     } else {
-      console.log('  No se encontró el dropdown de marcas. Procesando solo la marca activa.');
+      console.log('  No se encontró dropdown de marcas (posiblemente solo hay una marca activa).');
     }
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
   } catch (err) {
     console.log(`  Error buscando dropdown de marcas: ${err.message.split('\n')[0]}`);
     await page.screenshot({ path: './diagnostico-marcas-error.png', fullPage: false });
@@ -195,20 +206,16 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
     const prevCount = todosLosPagos.length;
 
     try {
-      // Abrir dropdown de la marca activa actual
-      const brandActual = todosLosPagos[todosLosPagos.length - 1]?.brand_name ?? brandInicial;
-      const dropdownMarca = page.getByText(brandActual, { exact: true })
-        .filter({ visible: true }).first();
-      await dropdownMarca.click({ timeout: 5000 });
-      await page.waitForTimeout(1000);
+      const dropdown = await abrirDropdownMarca();
+      if (!dropdown) throw new Error('No se pudo abrir el dropdown de marcas');
 
-      // Seleccionar la marca objetivo
-      const opcion = page.getByText(marca, { exact: true }).filter({ visible: true }).first()
-        .or(page.locator('[role="option"]').filter({ hasText: marca }).first());
+      const opcion = dropdown.locator('[role="option"], li, label')
+        .filter({ hasText: marca })
+        .first();
       await opcion.click({ timeout: 5000 });
       await page.waitForTimeout(500);
 
-      // Aplicar si hay modal
+      // Aplicar si hay botón de confirmación
       const btnAplicar = page.getByRole('button', { name: /^aplicar$/i }).first();
       if (await btnAplicar.isVisible({ timeout: 2000 })) {
         await btnAplicar.click();

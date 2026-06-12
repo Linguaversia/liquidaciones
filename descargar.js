@@ -65,9 +65,19 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
     } catch {}
   });
 
-  await page.goto('https://portal-app.pedidosya.com/finance-py', {
-    waitUntil: 'networkidle',
-  });
+  await Promise.all([
+    page.waitForResponse(
+      (r) => r.url().includes('management-api.pedidosya.com/v1/partners/contracts'),
+      { timeout: 30000 }
+    ).catch(() => {}),
+    page.goto('https://portal-app.pedidosya.com/finance-py', {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000,
+    }),
+  ]);
+
+  // Dar tiempo a que el listener procese la respuesta si llegó justo al mismo tiempo
+  if (!capturado) await page.waitForTimeout(3000);
 
   if (!capturado) {
     console.log('No se encontró la lista de contratos. ¿La sesión está activa?');
@@ -90,6 +100,7 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
   // --- Paso 2: recorrer cada local y descargar el ZIP de "ÚLTIMA" ---
   let ok = 0;
   const fallos = [];
+  let screenshotFalloTomado = false;
 
   for (let i = 0; i < locales.length; i++) {
     const local = locales[i];
@@ -97,12 +108,12 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
     try {
       await page.goto(
         `https://portal-app.pedidosya.com/finance-py/contracts/${local.id}/account-statuses?page=1`,
-        { waitUntil: 'networkidle' }
+        { waitUntil: 'domcontentloaded', timeout: 30000 }
       );
 
       // Esperar a que aparezca el badge ÚLTIMA
       const badgeUltima = page.locator(':text("ÚLTIMA")').first();
-      await badgeUltima.waitFor({ timeout: 15000 });
+      await badgeUltima.waitFor({ timeout: 30000 });
 
       // El botón de descarga del estado de cuenta está en la misma fila (tr)
       const filaUltima = badgeUltima.locator('xpath=ancestor::tr[1]');
@@ -120,6 +131,12 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
       ok++;
     } catch (err) {
       console.log(`  ERROR ${etiqueta}: ${err.message.split('\n')[0]}`);
+      if (!screenshotFalloTomado) {
+        const screenshotPath = './diagnostico-fallo-ultima.png';
+        await page.screenshot({ path: screenshotPath, fullPage: false });
+        console.log(`  Screenshot del primer fallo: ${screenshotPath}`);
+        screenshotFalloTomado = true;
+      }
       fallos.push(local);
     }
   }
