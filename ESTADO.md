@@ -1,6 +1,6 @@
 # Estado del Proyecto — Liquidaciones
 
-**Fecha de última actualización:** 2026-06-12
+**Fecha de última actualización:** 2026-06-12 (MercadoPago agregado)
 
 ---
 
@@ -19,6 +19,12 @@
 - El portal entrega el archivo en formato `.csv` (no XLSX). Ver sección de pendientes.
 - Sesión guardada en: `./sesiones/uber-argentina/sesion.json`
 - Para detalles técnicos del debugging y resolución de problemas, ver `UBER-DEBUGGING-LOG.md`.
+
+### MercadoPago — FUNCIONA
+
+- El motor navega a `mercadopago.com.ar/balance/reports/settlement_v2`, detecta si ya existe un reporte XLSX para el período de la semana anterior y lo descarga directamente. Si no existe, crea uno nuevo (Crear reporte → Manual → fechas → XLSX → Generar) y espera a que esté disponible.
+- Descarga en formato `.xlsx` nativo (~2 MB por reporte).
+- Sesión guardada en: `./sesiones/mercadopago-argentina/sesion.json`
 
 ### Rappi — DESCARGA CORRECTA (falta prueba multi-marca)
 
@@ -84,6 +90,31 @@ El script:
 
 ---
 
+### MercadoPago
+
+**Paso A — Login (solo la primera vez o si la sesión expira)**
+
+```
+node login-mercadopago.js
+```
+
+Abre el navegador en `mercadopago.com.ar`. Hacé login a mano (DNI o email → contraseña → reCAPTCHA si lo pide). Cuando veas el panel cargado, **cerrá el navegador**. La sesión se guarda automáticamente en `./sesiones/mercadopago-argentina/sesion.json`.
+
+**Paso B — Descargar liquidaciones**
+
+```
+node descargar-mercadopago.js
+```
+
+El script:
+1. Navega a Reportes de liquidaciones.
+2. Busca si ya existe un reporte XLSX para el período (lunes–domingo de la semana anterior).
+3. Si existe → lo descarga directamente.
+4. Si no existe → crea uno nuevo (Crear reporte → Manual → fechas → XLSX → Generar), espera disponibilidad (polling cada 15 s, hasta 5 min) y descarga.
+5. Guarda el archivo en `./descargas/mercadopago-argentina/<fecha-de-hoy>/`.
+
+---
+
 ### Rappi
 
 **Paso A — Login (solo la primera vez o si la sesión expira)**
@@ -120,9 +151,11 @@ C:\liquidaciones\
 ├── descargar.js          # Descarga liquidaciones PedidosYa (todos los locales)
 ├── login-rappi.js        # Login Rappi (guarda sesión al cerrar el navegador)
 ├── descargar-rappi.js    # Descarga liquidaciones Rappi (Fase 1 + Fase 2)
-├── login-uber.js         # Login Uber Eats (guarda sesión al cerrar el navegador)
-├── descargar-uber.js     # Descarga liquidaciones Uber Eats (crea informe + descarga)
-├── UBER-DEBUGGING-LOG.md # Registro técnico del proceso de debugging de Uber
+├── login-uber.js              # Login Uber Eats (guarda sesión al cerrar el navegador)
+├── descargar-uber.js          # Descarga liquidaciones Uber Eats (crea informe + descarga)
+├── login-mercadopago.js       # Login MercadoPago (guarda sesión al cerrar el navegador)
+├── descargar-mercadopago.js   # Descarga liquidaciones MercadoPago (detecta existente o crea nuevo)
+├── UBER-DEBUGGING-LOG.md      # Registro técnico del proceso de debugging de Uber
 │
 ├── package.json          # Dependencia: playwright ^1.60.0
 ├── package-lock.json
@@ -131,16 +164,20 @@ C:\liquidaciones\
 │   ├── argentina.json              # Sesión activa PedidosYa
 │   ├── rappi-argentina.json        # Sesión activa Rappi
 │   ├── argentina/                  # Carpeta de perfil del navegador (Chromium)
-│   └── uber-argentina/
-│       └── sesion.json             # Sesión activa Uber Eats
+│   ├── uber-argentina/
+│   │   └── sesion.json             # Sesión activa Uber Eats
+│   └── mercadopago-argentina/
+│       └── sesion.json             # Sesión activa MercadoPago
 │
 ├── descargas/            # Se crea automáticamente al correr los scripts
 │   ├── argentina/
 │   │   └── YYYY-MM-DD/   # ZIPs de PedidosYa (uno por local)
 │   ├── rappi-argentina/
 │   │   └── YYYY-MM-DD/   # XLS de Rappi (Rappi_ID_Pago_<id>.xls por pago)
-│   └── uber-argentina/
-│       └── YYYY-MM-DD/   # CSV de Uber Eats (nombre generado por el portal)
+│   ├── uber-argentina/
+│   │   └── YYYY-MM-DD/   # CSV de Uber Eats (nombre generado por el portal)
+│   └── mercadopago-argentina/
+│       └── YYYY-MM-DD/   # XLSX de MercadoPago (settlement-<id>-manual-<fecha>.xlsx)
 │
 └── node_modules/         # Playwright instalado
 ```
@@ -157,11 +194,15 @@ Cuando algo falla, `descargar-rappi.js` genera screenshots automáticos en la ra
 
 ## 4. Qué falta por hacer
 
+### Próximo paso
+
+- [ ] **Panel web:** interfaz para ejecutar todos los motores desde el navegador (sin abrir terminales), ver el estado de cada descarga en tiempo real y acceder al historial de archivos.
+
 ### Prioritario
 
 - [ ] **Uber — formato XLSX:** el portal entrega CSV por defecto. Investigar si el formulario tiene selector de formato o si se configura en el perfil de la cuenta. Ver `UBER-DEBUGGING-LOG.md` sección 5.
 - [ ] **Prueba multi-marca Rappi:** correr `descargar-rappi.js` con una cuenta que tenga 2+ marcas y verificar que el selector de marcas funciona (el código está escrito pero nunca se ejecutó ese camino en producción).
-- [ ] **Manejo de sesión expirada:** si `argentina.json` o `rappi-argentina.json` expiran, el script falla silenciosamente (navega pero no encuentra los datos). Habría que detectarlo y avisar claramente.
+- [ ] **Manejo de sesión expirada:** si alguna sesión expira, el script falla silenciosamente (navega pero no encuentra los datos). Habría que detectarlo y avisar claramente.
 
 ### Mejoras deseables
 
