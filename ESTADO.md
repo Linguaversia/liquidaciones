@@ -1,6 +1,6 @@
 # Estado del Proyecto — Liquidaciones
 
-**Fecha de última actualización:** 2026-06-16 (rango de fechas por parámetros en Uber y MercadoPago)
+**Fecha de última actualización:** 2026-06-16 (Drive centralizado en config.js, parametrización Uber, preparación Chile)
 
 ---
 
@@ -12,13 +12,19 @@
 - La lista de locales se obtiene automáticamente del endpoint `/contracts`: varía día a día según las nuevas captaciones del equipo comercial. No es necesario mantener ninguna lista manual.
 - Probado con ~142 locales. Corre sin intervención una vez que la sesión está guardada.
 - Sesión guardada en: `./sesiones/argentina.json`
+- **Listo para Chile sin cambios de código.** Solo se necesita `node login.js chile` cuando haya acceso. La sesión irá a `./sesiones/chile.json` y las descargas a `G:\Mi unidad\Liquidaciones\chile\`.
 
 ### Uber Eats — FUNCIONA
 
 - El motor navega a `merchants.ubereats.com/manager/reports`, crea un informe "Detalles del pago" para la semana anterior (lunes–domingo), selecciona todos los negocios (13), y descarga el archivo resultante.
-- Acepta rango de fechas opcional: `node descargar-uber.js 2026-06-01 2026-06-07`. Sin parámetros usa la semana anterior automáticamente.
+- Firma completa: `node descargar-uber.js [pais] [fecha-inicio] [fecha-fin]`
+  - Sin parámetros: argentina, semana anterior.
+  - `node descargar-uber.js argentina 2026-06-01 2026-06-07` — argentina con rango explícito.
+  - `node descargar-uber.js chile` — chile, semana anterior (cuando haya acceso).
+  - `node descargar-uber.js 2026-06-01 2026-06-07` — modo compatible (pais = argentina).
 - El portal entrega el archivo en formato `.csv` (no XLSX). Ver sección de pendientes.
-- Sesión guardada en: `./sesiones/uber-argentina/sesion.json`
+- Sesión guardada en: `./sesiones/uber-<pais>/sesion.json`
+- **Listo para Chile sin más cambios de código.** Solo falta `node login-uber.js` con la cuenta chilena (pendiente: verificar que `login-uber.js` acepte país como argumento).
 - Para detalles técnicos del debugging y resolución de problemas, ver `UBER-DEBUGGING-LOG.md`.
 
 ### MercadoPago — FUNCIONA
@@ -27,6 +33,7 @@
 - Acepta rango de fechas opcional: `node descargar-mercadopago.js 2026-06-01 2026-06-07`. Sin parámetros usa la semana anterior automáticamente.
 - Descarga en formato `.xlsx` nativo (~2 MB por reporte).
 - Sesión guardada en: `./sesiones/mercadopago-argentina/sesion.json`
+- MercadoPago no aplica para Chile (solo argentina por ahora).
 
 ### Rappi — DESCARGA CORRECTA (falta prueba multi-marca)
 
@@ -35,9 +42,34 @@
 - **Pendiente:** verificar el flujo completo cuando la cuenta tiene múltiples marcas (el selector de marcas está implementado pero no se ha podido probar en producción con una cuenta multi-marca real).
 - Sesión guardada en: `./sesiones/rappi-argentina.json`
 
+### Panel web — FUNCIONA
+
+- Servidor Express en `localhost:3000` (`node panel.js`) para ejecutar descargas sin abrir terminales.
+- Muestra historial de archivos descargados ordenado por fecha de modificación.
+- Uber Eats y Mercado Pago tienen campos opcionales `desde` / `hasta`; PedidosYa y Rappi no.
+- Descarga de archivos desde el historial vía `/descargas/...`.
+
 ---
 
-## 2. Cómo ejecutar cada motor
+## 2. Dónde se guardan los archivos
+
+Todos los scripts guardan en la carpeta de Google Drive sincronizada en esta máquina:
+
+```
+G:\Mi unidad\Liquidaciones\
+├── argentina\          ← PedidosYa
+├── rappi-argentina\    ← Rappi
+├── uber-argentina\     ← Uber Eats
+└── mercadopago-argentina\  ← MercadoPago
+```
+
+**La ruta está centralizada en `config.js`** — es el único archivo a modificar si la carpeta cambia (por ejemplo, al migrar a un servidor o cambiar la cuenta de Drive).
+
+La carpeta de Drive está **compartida con el equipo de Atomic** con permiso de edición, restringido al dominio.
+
+---
+
+## 3. Cómo ejecutar cada motor
 
 ### PedidosYa
 
@@ -62,7 +94,7 @@ node descargar.js argentina
 El script:
 1. Carga `/finance-py` para disparar el fetch de `/contracts` y obtener la lista de locales.
 2. Recorre cada local, navega a su página de estados de cuenta y descarga el ZIP de la fila "ÚLTIMA".
-3. Guarda los archivos en `./descargas/argentina/<fecha-de-hoy>/`.
+3. Guarda los archivos en `G:\Mi unidad\Liquidaciones\argentina\<fecha-de-hoy>\`.
 
 ---
 
@@ -79,10 +111,13 @@ Abre el navegador en `merchants.ubereats.com`. Hacé login a mano. Cuando el pan
 **Paso B — Descargar liquidaciones**
 
 ```
-# Semana anterior (default)
+# Semana anterior (default, argentina)
 node descargar-uber.js
 
 # Rango de fechas específico
+node descargar-uber.js argentina 2026-06-01 2026-06-07
+
+# Modo compatible (sin país explícito, asume argentina)
 node descargar-uber.js 2026-06-01 2026-06-07
 ```
 
@@ -94,7 +129,7 @@ El script:
 3. Selecciona todos los negocios (13).
 4. Selecciona el intervalo de fechas indicado (o la semana anterior si no se pasan parámetros).
 5. Envía el formulario y espera a que el informe esté disponible (polling cada 15 s, hasta 5 min).
-6. Descarga el archivo en `./descargas/uber-argentina/<fecha-de-hoy>/`.
+6. Descarga el archivo en `G:\Mi unidad\Liquidaciones\uber-argentina\<fecha-de-hoy>\`.
 
 ---
 
@@ -125,7 +160,7 @@ El script:
 2. Busca si ya existe un reporte XLSX para el período indicado.
 3. Si existe → lo descarga directamente.
 4. Si no existe → abre el calendario, navega al mes correcto, selecciona inicio y fin, elige formato XLSX y genera el reporte. Hace polling cada 15 s (hasta 5 min) hasta que esté disponible y lo descarga.
-5. Guarda el archivo en `./descargas/mercadopago-argentina/<fecha-de-hoy>/`.
+5. Guarda el archivo en `G:\Mi unidad\Liquidaciones\mercadopago-argentina\<fecha-de-hoy>\`.
 
 ---
 
@@ -152,48 +187,51 @@ node descargar-rappi.js argentina
 El script ejecuta dos fases:
 - **Fase 1:** Navega a Financiero > Resumen, amplía el período a "Últimos 30 días", localiza cada pago "PAID" en la tabla, abre su detalle y cliquea "Descargar relación de ventas" para que el servidor genere el XLS.
 - **Fase 2:** Va a la pestaña Reportes, intercepta la descarga del XLS via `page.route()` y guarda cada archivo.
-- Guarda los archivos en `./descargas/rappi-argentina/<fecha-de-hoy>/`.
+- Guarda los archivos en `G:\Mi unidad\Liquidaciones\rappi-argentina\<fecha-de-hoy>\`.
 
 ---
 
-## 3. Estructura de carpetas y archivos clave
+## 4. Estructura de carpetas y archivos clave
 
 ```
 C:\liquidaciones\
+│
+├── config.js             # Ruta raíz de descargas (único lugar a cambiar si se mueve)
+├── panel.js              # Servidor web panel (puerto 3000)
 │
 ├── login.js              # Login PedidosYa (guarda sesión al presionar ENTER)
 ├── descargar.js          # Descarga liquidaciones PedidosYa (todos los locales)
 ├── login-rappi.js        # Login Rappi (guarda sesión al cerrar el navegador)
 ├── descargar-rappi.js    # Descarga liquidaciones Rappi (Fase 1 + Fase 2)
-├── login-uber.js              # Login Uber Eats (guarda sesión al cerrar el navegador)
-├── descargar-uber.js          # Descarga liquidaciones Uber Eats (crea informe + descarga)
-├── login-mercadopago.js       # Login MercadoPago (guarda sesión al cerrar el navegador)
-├── descargar-mercadopago.js   # Descarga liquidaciones MercadoPago (detecta existente o crea nuevo)
-├── UBER-DEBUGGING-LOG.md      # Registro técnico del proceso de debugging de Uber
+├── login-uber.js         # Login Uber Eats (guarda sesión al cerrar el navegador)
+├── descargar-uber.js     # Descarga liquidaciones Uber Eats (parametrizado por país)
+├── login-mercadopago.js  # Login MercadoPago (guarda sesión al cerrar el navegador)
+├── descargar-mercadopago.js  # Descarga liquidaciones MercadoPago
+├── UBER-DEBUGGING-LOG.md     # Registro técnico del proceso de debugging de Uber
 │
 ├── package.json          # Dependencia: playwright ^1.60.0
 ├── package-lock.json
 │
 ├── sesiones/
-│   ├── argentina.json              # Sesión activa PedidosYa
+│   ├── argentina.json              # Sesión activa PedidosYa Argentina
 │   ├── rappi-argentina.json        # Sesión activa Rappi
 │   ├── argentina/                  # Carpeta de perfil del navegador (Chromium)
 │   ├── uber-argentina/
-│   │   └── sesion.json             # Sesión activa Uber Eats
+│   │   └── sesion.json             # Sesión activa Uber Eats Argentina
 │   └── mercadopago-argentina/
 │       └── sesion.json             # Sesión activa MercadoPago
 │
-├── descargas/            # Se crea automáticamente al correr los scripts
-│   ├── argentina/
-│   │   └── YYYY-MM-DD/   # ZIPs de PedidosYa (uno por local)
-│   ├── rappi-argentina/
-│   │   └── YYYY-MM-DD/   # XLS de Rappi (Rappi_ID_Pago_<id>.xls por pago)
-│   ├── uber-argentina/
-│   │   └── YYYY-MM-DD/   # CSV de Uber Eats (nombre generado por el portal)
-│   └── mercadopago-argentina/
-│       └── YYYY-MM-DD/   # XLSX de MercadoPago (settlement-<id>-manual-<fecha>.xlsx)
-│
 └── node_modules/         # Playwright instalado
+
+G:\Mi unidad\Liquidaciones\          ← Google Drive (sincronizado, compartido con Atomic)
+├── argentina\                        # ZIPs PedidosYa (uno por local)
+│   └── YYYY-MM-DD\
+├── rappi-argentina\                  # XLS Rappi (Rappi_ID_Pago_<id>.xls)
+│   └── YYYY-MM-DD\
+├── uber-argentina\                   # CSV Uber Eats
+│   └── YYYY-MM-DD\
+└── mercadopago-argentina\            # XLSX MercadoPago (settlement-<id>-manual-<fecha>.xlsx)
+    └── YYYY-MM-DD\
 ```
 
 ### Archivos de diagnóstico (Rappi)
@@ -206,29 +244,43 @@ Cuando algo falla, `descargar-rappi.js` genera screenshots automáticos en la ra
 
 ---
 
-## 4. Qué falta por hacer
+## 5. Preparación para Chile
 
-### Próximo paso
+| Motor | Estado | Qué falta |
+|---|---|---|
+| PedidosYa | ✅ Listo sin cambios de código | Solo `node login.js chile` cuando haya acceso |
+| Uber Eats | ✅ Parametrizado (`descargar-uber.js chile`) | Login con cuenta chilena; verificar que `login-uber.js` acepte país como argumento |
+| Rappi | — | No aplica por ahora |
+| MercadoPago | — | No aplica para Chile |
 
-- [ ] **Panel web:** interfaz para ejecutar todos los motores desde el navegador (sin abrir terminales), ver el estado de cada descarga en tiempo real y acceder al historial de archivos.
+**Nota PedidosYa:** El script navega directo a la URL `/finance-py` sin tocar el sidebar, por lo que la diferencia de menú (Argentina tiene dos links, Chile tiene uno solo llamado "Finanzas") no afecta la automatización.
+
+---
+
+## 6. Qué falta por hacer
 
 ### Prioritario
 
 - [ ] **Uber — formato XLSX:** el portal entrega CSV por defecto. Investigar si el formulario tiene selector de formato o si se configura en el perfil de la cuenta. Ver `UBER-DEBUGGING-LOG.md` sección 5.
 - [ ] **Prueba multi-marca Rappi:** correr `descargar-rappi.js` con una cuenta que tenga 2+ marcas y verificar que el selector de marcas funciona (el código está escrito pero nunca se ejecutó ese camino en producción).
 - [ ] **Manejo de sesión expirada:** si alguna sesión expira, el script falla silenciosamente (navega pero no encuentra los datos). Habría que detectarlo y avisar claramente.
+- [ ] **Chile — verificar `login-uber.js`:** confirmar que acepta país como argumento (o adaptarlo) antes de tener el acceso chileno.
+
+### Revisión antes de producción compartida
+
+- [ ] **`shell: true` en `panel.js`:** el `spawn` usa `shell: true` para simplificar la ejecución de comandos. Antes de exponer el panel a usuarios no técnicos, revisar que los argumentos (fechas ingresadas desde el browser) no puedan inyectar comandos. Las fechas se validan por formato en el script receptor, pero conviene agregar sanitización también en el backend del panel.
+- [ ] **Estandarización de formatos:** PedidosYa entrega ZIP, Rappi XLS, Uber CSV, MercadoPago XLSX. Evaluar con el equipo si conviene unificar (ej. todo XLSX) o si los formatos actuales son aceptables para el flujo contable.
 
 ### Mejoras deseables
 
-- [ ] **Modo headless:** ambos motores abren el navegador visible (`headless: false`). En producción sería útil tener una opción `node descargar.js argentina headless` para correr sin ventana.
+- [ ] **Modo headless:** todos los motores abren el navegador visible (`headless: false`). En producción sería útil tener una opción para correr sin ventana.
 - [ ] **Log a archivo:** actualmente todo va a consola. Un log por ejecución facilita auditorías.
 - [ ] **Reintento automático de fallos:** si un local o un pago falla, el script lo lista al final pero no reintenta. Se podría agregar un segundo pasaje solo sobre los fallos.
-- [ ] **Soporte multi-país:** la estructura ya está preparada (`pais = process.argv[2]`) pero solo se probó con `argentina`. Para agregar Chile u otro país se necesita: (a) hacer login con esa cuenta, (b) verificar que la URL de PedidosYa y el código de país de Rappi sean correctos.
 - [ ] **Alertas si no hay archivos nuevos:** detectar si el día de hoy ya tiene descargas y saltar, o alertar si la cantidad de archivos es inusualmente baja.
 
 ---
 
-## 5. Notas técnicas rápidas
+## 7. Notas técnicas rápidas
 
 ### PedidosYa — endpoint clave
 ```
