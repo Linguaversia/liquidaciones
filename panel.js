@@ -3,10 +3,10 @@ const express = require('express');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { CARPETA_DESCARGAS } = require('./config');
 
 const app = express();
 const PORT = 3000;
-const DESCARGAS_DIR = path.resolve('./descargas');
 
 app.use(express.json());
 
@@ -46,12 +46,12 @@ const PLATAFORMAS = {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function leerHistorial() {
-  if (!fs.existsSync(DESCARGAS_DIR)) return [];
+  if (!fs.existsSync(CARPETA_DESCARGAS)) return [];
 
   const resultados = [];
 
   for (const [id, cfg] of Object.entries(PLATAFORMAS)) {
-    const carpetaPlataforma = path.join(DESCARGAS_DIR, cfg.carpeta);
+    const carpetaPlataforma = path.join(CARPETA_DESCARGAS, cfg.carpeta);
     if (!fs.existsSync(carpetaPlataforma)) continue;
 
     const fechas = fs.readdirSync(carpetaPlataforma)
@@ -271,7 +271,7 @@ app.post('/api/descargar/:plataforma', (req, res) => {
 
     // Listar archivos nuevos descargados por la carpeta de hoy
     const hoy = new Date().toISOString().slice(0, 10);
-    const carpetaHoy = path.join(DESCARGAS_DIR, cfg.carpeta, hoy);
+    const carpetaHoy = path.join(CARPETA_DESCARGAS, cfg.carpeta, hoy);
     let archivos = [];
     try {
       if (fs.existsSync(carpetaHoy)) {
@@ -292,7 +292,7 @@ app.post('/api/descargar/:plataforma', (req, res) => {
 });
 
 // ── Servir archivos descargados ──────────────────────────────────────────────
-app.use('/descargas', express.static(DESCARGAS_DIR));
+app.use('/descargas', express.static(CARPETA_DESCARGAS));
 
 // ── Iniciar ──────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {

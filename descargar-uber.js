@@ -9,6 +9,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const { CARPETA_DESCARGAS } = require('./config');
 
 const archivoSesion = path.resolve('./sesiones/uber-argentina/sesion.json');
 if (!fs.existsSync(archivoSesion)) {
@@ -16,8 +17,14 @@ if (!fs.existsSync(archivoSesion)) {
   process.exit(1);
 }
 
+if (!fs.existsSync(CARPETA_DESCARGAS)) {
+  console.log(`ERROR: la carpeta de descargas no existe: "${CARPETA_DESCARGAS}"`);
+  console.log('Verificá que Google Drive esté sincronizado y la carpeta exista.');
+  process.exit(1);
+}
+
 const hoyStr = new Date().toISOString().slice(0, 10);
-const carpetaDescargas = path.resolve(`./descargas/uber-argentina/${hoyStr}`);
+const carpetaDescargas = path.join(CARPETA_DESCARGAS, 'uber-argentina', hoyStr);
 fs.mkdirSync(carpetaDescargas, { recursive: true });
 
 // Semana anterior: lunes a domingo

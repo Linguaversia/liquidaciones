@@ -11,6 +11,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const { CARPETA_DESCARGAS } = require('./config');
 
 const pais = process.argv[2];
 const modo = process.argv[3]; // 'prueba' o vacío
@@ -26,11 +27,17 @@ if (!fs.existsSync(archivoSesion)) {
   process.exit(1);
 }
 
+if (!fs.existsSync(CARPETA_DESCARGAS)) {
+  console.log(`ERROR: la carpeta de descargas no existe: "${CARPETA_DESCARGAS}"`);
+  console.log('Verificá que Google Drive esté sincronizado y la carpeta exista.');
+  process.exit(1);
+}
+
 const hoy = new Date().toISOString().slice(0, 10);
 const codigoPais = { argentina: 'AR', chile: 'CL', uruguay: 'UY', colombia: 'CO', peru: 'PE' }[pais]
   ?? pais.toUpperCase().slice(0, 2);
 
-const carpetaDescargas = path.resolve(`./descargas/rappi-${pais}/${hoy}`);
+const carpetaDescargas = path.join(CARPETA_DESCARGAS, `rappi-${pais}`, hoy);
 fs.mkdirSync(carpetaDescargas, { recursive: true });
 
 // ─────────────────────────────────────────────────────────
