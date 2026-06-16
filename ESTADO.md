@@ -1,6 +1,6 @@
 # Estado del Proyecto — Liquidaciones
 
-**Fecha de última actualización:** 2026-06-12 (MercadoPago agregado)
+**Fecha de última actualización:** 2026-06-16 (rango de fechas por parámetros en Uber y MercadoPago)
 
 ---
 
@@ -16,13 +16,15 @@
 ### Uber Eats — FUNCIONA
 
 - El motor navega a `merchants.ubereats.com/manager/reports`, crea un informe "Detalles del pago" para la semana anterior (lunes–domingo), selecciona todos los negocios (13), y descarga el archivo resultante.
+- Acepta rango de fechas opcional: `node descargar-uber.js 2026-06-01 2026-06-07`. Sin parámetros usa la semana anterior automáticamente.
 - El portal entrega el archivo en formato `.csv` (no XLSX). Ver sección de pendientes.
 - Sesión guardada en: `./sesiones/uber-argentina/sesion.json`
 - Para detalles técnicos del debugging y resolución de problemas, ver `UBER-DEBUGGING-LOG.md`.
 
 ### MercadoPago — FUNCIONA
 
-- El motor navega a `mercadopago.com.ar/balance/reports/settlement_v2`, detecta si ya existe un reporte XLSX para el período de la semana anterior y lo descarga directamente. Si no existe, crea uno nuevo (Crear reporte → Manual → fechas → XLSX → Generar) y espera a que esté disponible.
+- El motor navega a `mercadopago.com.ar/balance/reports/settlement_v2`, detecta si ya existe un reporte XLSX para el período y lo descarga directamente. Si no existe, lo genera (Crear reporte → Manual → calendario → XLSX → Generar) y hace polling cada 15 s hasta que esté disponible (máx. 5 min).
+- Acepta rango de fechas opcional: `node descargar-mercadopago.js 2026-06-01 2026-06-07`. Sin parámetros usa la semana anterior automáticamente.
 - Descarga en formato `.xlsx` nativo (~2 MB por reporte).
 - Sesión guardada en: `./sesiones/mercadopago-argentina/sesion.json`
 
@@ -77,14 +79,20 @@ Abre el navegador en `merchants.ubereats.com`. Hacé login a mano. Cuando el pan
 **Paso B — Descargar liquidaciones**
 
 ```
+# Semana anterior (default)
 node descargar-uber.js
+
+# Rango de fechas específico
+node descargar-uber.js 2026-06-01 2026-06-07
 ```
+
+Si se pasan fechas, ambas son obligatorias y deben tener formato `YYYY-MM-DD`. Si una fecha es inválida el script lo indica y no continúa.
 
 El script:
 1. Navega a Informes y abre el formulario de creación.
 2. Selecciona tipo "Detalles del pago" bajo el acordeón "Pagos".
 3. Selecciona todos los negocios (13).
-4. Selecciona el intervalo de la semana anterior (lunes–domingo).
+4. Selecciona el intervalo de fechas indicado (o la semana anterior si no se pasan parámetros).
 5. Envía el formulario y espera a que el informe esté disponible (polling cada 15 s, hasta 5 min).
 6. Descarga el archivo en `./descargas/uber-argentina/<fecha-de-hoy>/`.
 
@@ -103,14 +111,20 @@ Abre el navegador en `mercadopago.com.ar`. Hacé login a mano (DNI o email → c
 **Paso B — Descargar liquidaciones**
 
 ```
+# Semana anterior (default)
 node descargar-mercadopago.js
+
+# Rango de fechas específico
+node descargar-mercadopago.js 2026-06-01 2026-06-07
 ```
+
+Si se pasan fechas, ambas son obligatorias y deben tener formato `YYYY-MM-DD`. Si una fecha es inválida el script lo indica y no continúa.
 
 El script:
 1. Navega a Reportes de liquidaciones.
-2. Busca si ya existe un reporte XLSX para el período (lunes–domingo de la semana anterior).
+2. Busca si ya existe un reporte XLSX para el período indicado.
 3. Si existe → lo descarga directamente.
-4. Si no existe → crea uno nuevo (Crear reporte → Manual → fechas → XLSX → Generar), espera disponibilidad (polling cada 15 s, hasta 5 min) y descarga.
+4. Si no existe → abre el calendario, navega al mes correcto, selecciona inicio y fin, elige formato XLSX y genera el reporte. Hace polling cada 15 s (hasta 5 min) hasta que esté disponible y lo descarga.
 5. Guarda el archivo en `./descargas/mercadopago-argentina/<fecha-de-hoy>/`.
 
 ---

@@ -2,7 +2,9 @@
 // Genera y descarga el informe "Resumen de pagos" de la semana anterior
 // para todos los establecimientos de Uber Eats Argentina.
 //
-// Uso: node descargar-uber.js
+// Uso: node descargar-uber.js [YYYY-MM-DD YYYY-MM-DD]
+//   Sin parámetros: semana anterior (lunes–domingo).
+//   Con dos fechas:  usa el rango indicado.
 
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -29,6 +31,34 @@ function semanaAnterior() {
   return { lunes, domingo };
 }
 
+function parsearFecha(str) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(str)) return null;
+  const [anio, mes, dia] = str.split('-').map(Number);
+  const d = new Date(anio, mes - 1, dia);
+  if (d.getFullYear() !== anio || d.getMonth() !== mes - 1 || d.getDate() !== dia) return null;
+  return d;
+}
+
+const [argInicio, argFin] = [process.argv[2], process.argv[3]];
+if ((argInicio && !argFin) || (!argInicio && argFin)) {
+  console.log('Error: debés pasar ambas fechas o ninguna.\nEjemplo: node descargar-uber.js 2026-06-01 2026-06-07');
+  process.exit(1);
+}
+
+let fechaInicio, fechaFin, origenFechas;
+if (argInicio) {
+  fechaInicio = parsearFecha(argInicio);
+  fechaFin    = parsearFecha(argFin);
+  if (!fechaInicio) { console.log(`Error: fecha de inicio inválida: "${argInicio}". Formato esperado: YYYY-MM-DD`); process.exit(1); }
+  if (!fechaFin)    { console.log(`Error: fecha de fin inválida: "${argFin}". Formato esperado: YYYY-MM-DD`);    process.exit(1); }
+  origenFechas = 'parámetros';
+} else {
+  const sa = semanaAnterior();
+  fechaInicio  = sa.lunes;
+  fechaFin     = sa.domingo;
+  origenFechas = 'semana anterior calculada';
+}
+
 async function shot(page, nombre) {
   await page.screenshot({ path: `./${nombre}.png`, fullPage: false });
   console.log(`  Screenshot: ./${nombre}.png`);
@@ -48,10 +78,9 @@ async function tryClick(locator, descripcion, timeout = 3000) {
 }
 
 (async () => {
-  const { lunes, domingo } = semanaAnterior();
-  const inicioStr = lunes.toISOString().slice(0, 10);
-  const finStr = domingo.toISOString().slice(0, 10);
-  console.log(`Período: ${inicioStr} → ${finStr}`);
+  const inicioStr = fechaInicio.toISOString().slice(0, 10);
+  const finStr    = fechaFin.toISOString().slice(0, 10);
+  console.log(`Rango: ${inicioStr} → ${finStr} (${origenFechas})`);
 
   const browser = await chromium.launch({ headless: false, args: ['--start-maximized'] });
   const context = await browser.newContext({
@@ -231,7 +260,7 @@ async function tryClick(locator, descripcion, timeout = 3000) {
     return res.startsWith('clicked');
   }
 
-  const diaInicioOk = await clickDia(lunes, 'lunes');
+  const diaInicioOk = await clickDia(fechaInicio, 'inicio');
   await page.waitForTimeout(800);
 
   // Después del primer click, el calendario debería seguir abierto para el fin
@@ -243,7 +272,7 @@ async function tryClick(locator, descripcion, timeout = 3000) {
     await inputFechaFin.click({ timeout: 5000 }).catch(() => {});
     await page.waitForTimeout(1500);
   }
-  await clickDia(domingo, 'domingo');
+  await clickDia(fechaFin, 'fin');
   await page.waitForTimeout(800);
   await shot(page, 'uber-7-fechas');
 
