@@ -3,3 +3,5 @@ descargas/
 node_modules/
 *.png
 *.log
+diagnostico-*.js
+diag-*.html

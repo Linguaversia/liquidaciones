@@ -32,6 +32,7 @@ const PLATAFORMAS = {
     args: ['descargar-uber.js'],
     carpeta: 'uber-argentina',
     color: '#000000',
+    fechasOpcionales: true,
   },
   mercadopago: {
     label: 'Mercado Pago',
@@ -39,6 +40,7 @@ const PLATAFORMAS = {
     args: ['descargar-mercadopago.js'],
     carpeta: 'mercadopago-argentina',
     color: '#009EE3',
+    fechasOpcionales: true,
   },
 };
 
@@ -107,6 +109,11 @@ app.get('/', (req, res) => {
       <div class="platform-header" style="border-left: 4px solid ${cfg.color}">
         <strong>${cfg.label}</strong>
       </div>
+      ${cfg.fechasOpcionales ? `
+      <div class="date-range">
+        <label>Desde <input type="date" class="input-desde" data-plataforma="${id}"></label>
+        <label>Hasta  <input type="date" class="input-hasta" data-plataforma="${id}"></label>
+      </div>` : ''}
       <button class="btn-descargar" data-plataforma="${id}" style="border-color:${cfg.color};color:${cfg.color}">
         ▶ Descargar ahora
       </button>
@@ -151,6 +158,9 @@ app.get('/', (req, res) => {
     a:hover { text-decoration: underline; }
     .status-ok { color: #22863a; }
     .status-err { color: #cb2431; }
+    .date-range { margin-bottom: 10px; display: flex; flex-direction: column; gap: 5px; }
+    .date-range label { font-size: 11px; color: #666; display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+    .date-range input[type="date"] { flex: 1; padding: 3px 5px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -175,13 +185,35 @@ app.get('/', (req, res) => {
       btn.addEventListener('click', async () => {
         const plataforma = btn.dataset.plataforma;
         const log = document.getElementById('log-' + plataforma);
+
+        // Leer fechas opcionales (solo uber y mercadopago tienen estos campos)
+        const inputDesde = document.querySelector('.input-desde[data-plataforma="' + plataforma + '"]');
+        const inputHasta = document.querySelector('.input-hasta[data-plataforma="' + plataforma + '"]');
+        const desde = inputDesde ? inputDesde.value : '';
+        const hasta  = inputHasta ? inputHasta.value  : '';
+
+        // Validación: ambas fechas o ninguna
+        if ((desde && !hasta) || (!desde && hasta)) {
+          log.textContent = '⚠ Completá ambas fechas (desde y hasta) o dejá las dos vacías.';
+          log.style.color = '#f48771';
+          log.classList.add('visible');
+          return;
+        }
+
         btn.disabled = true;
         btn.textContent = '⏳ Ejecutando…';
         log.textContent = '';
         log.classList.add('visible');
 
+        const body = {};
+        if (desde && hasta) { body.desde = desde; body.hasta = hasta; }
+
         try {
-          const res = await fetch('/api/descargar/' + plataforma, { method: 'POST' });
+          const res = await fetch('/api/descargar/' + plataforma, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
           const data = await res.json();
 
           if (data.ok) {
@@ -219,7 +251,14 @@ app.post('/api/descargar/:plataforma', (req, res) => {
   let stdout = '';
   let stderr = '';
 
-  const proc = spawn(cfg.cmd, cfg.args, {
+  // Añadir fechas al comando si la plataforma las soporta y el usuario las proporcionó
+  let cmdArgs = [...cfg.args];
+  if (cfg.fechasOpcionales) {
+    const { desde, hasta } = req.body || {};
+    if (desde && hasta) cmdArgs = [...cmdArgs, desde, hasta];
+  }
+
+  const proc = spawn(cfg.cmd, cmdArgs, {
     cwd: path.resolve('.'),
     shell: true,
   });
