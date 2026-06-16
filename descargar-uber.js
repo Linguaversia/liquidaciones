@@ -2,18 +2,36 @@
 // Genera y descarga el informe "Resumen de pagos" de la semana anterior
 // para todos los establecimientos de Uber Eats Argentina.
 //
-// Uso: node descargar-uber.js [YYYY-MM-DD YYYY-MM-DD]
-//   Sin parámetros: semana anterior (lunes–domingo).
-//   Con dos fechas:  usa el rango indicado.
+// Uso: node descargar-uber.js [pais] [fecha-inicio] [fecha-fin]
+//   Sin parámetros:              argentina, semana anterior.
+//   Con país:                    node descargar-uber.js chile
+//   Con país y fechas:           node descargar-uber.js chile 2026-06-01 2026-06-07
+//   Sin país (compatibilidad):   node descargar-uber.js 2026-06-01 2026-06-07
 
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 const { CARPETA_DESCARGAS } = require('./config');
 
-const archivoSesion = path.resolve('./sesiones/uber-argentina/sesion.json');
+// ── Argumentos: [pais] [fecha-inicio] [fecha-fin] ────────────────────────────
+// Si el primer arg tiene formato YYYY-MM-DD se trata como fecha (pais = 'argentina').
+const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
+const arg1 = process.argv[2];
+let pais, argInicio, argFin;
+if (!arg1 || !FECHA_RE.test(arg1)) {
+  pais      = arg1 || 'argentina';
+  argInicio = process.argv[3];
+  argFin    = process.argv[4];
+} else {
+  // arg1 es una fecha: modo compatible sin país explícito
+  pais      = 'argentina';
+  argInicio = arg1;
+  argFin    = process.argv[3];
+}
+
+const archivoSesion = path.resolve(`./sesiones/uber-${pais}/sesion.json`);
 if (!fs.existsSync(archivoSesion)) {
-  console.log('No existe sesión. Corre primero: node login-uber.js');
+  console.log(`No existe sesión para Uber ${pais}. Corre primero: node login-uber.js`);
   process.exit(1);
 }
 
@@ -24,7 +42,7 @@ if (!fs.existsSync(CARPETA_DESCARGAS)) {
 }
 
 const hoyStr = new Date().toISOString().slice(0, 10);
-const carpetaDescargas = path.join(CARPETA_DESCARGAS, 'uber-argentina', hoyStr);
+const carpetaDescargas = path.join(CARPETA_DESCARGAS, `uber-${pais}`, hoyStr);
 fs.mkdirSync(carpetaDescargas, { recursive: true });
 
 // Semana anterior: lunes a domingo
@@ -46,9 +64,9 @@ function parsearFecha(str) {
   return d;
 }
 
-const [argInicio, argFin] = [process.argv[2], process.argv[3]];
 if ((argInicio && !argFin) || (!argInicio && argFin)) {
-  console.log('Error: debés pasar ambas fechas o ninguna.\nEjemplo: node descargar-uber.js 2026-06-01 2026-06-07');
+  console.log('Error: debés pasar ambas fechas o ninguna.');
+  console.log(`Ejemplo: node descargar-uber.js ${pais} 2026-06-01 2026-06-07`);
   process.exit(1);
 }
 
@@ -395,7 +413,7 @@ async function tryClick(locator, descripcion, timeout = 3000) {
   });
 
   if (download && download.suggestedFilename) {
-    const nombre = download.suggestedFilename() || `uber-argentina-${hoyStr}.xlsx`;
+    const nombre = download.suggestedFilename() || `uber-${pais}-${hoyStr}.xlsx`;
     const destino = path.join(carpetaDescargas, nombre);
     await download.saveAs(destino);
     const { size } = fs.statSync(destino);
