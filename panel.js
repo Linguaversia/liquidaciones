@@ -29,7 +29,7 @@ const PLATAFORMAS = {
   uber: {
     label: 'Uber Eats',
     cmd: 'node',
-    args: ['descargar-uber.js'],
+    args: ['descargar-uber.js', 'argentina'],
     carpeta: 'uber-argentina',
     color: '#000000',
     fechasOpcionales: true,
@@ -42,9 +42,28 @@ const PLATAFORMAS = {
     color: '#009EE3',
     fechasOpcionales: true,
   },
+  'pedidosya-chile': {
+    label: 'PedidosYa',
+    cmd: 'node',
+    args: ['descargar.js', 'chile'],
+    carpeta: 'chile',
+    color: '#FF6900',
+  },
 };
 
+const SECCIONES = [
+  { titulo: 'Argentina', ids: ['pedidosya', 'rappi', 'uber', 'mercadopago'] },
+  { titulo: 'Chile',     ids: ['pedidosya-chile'] },
+];
+
+// Mapa id-plataforma → país, derivado de SECCIONES. Se actualiza solo al agregar países.
+const PLATAFORMA_PAIS = Object.fromEntries(
+  SECCIONES.flatMap(({ titulo, ids }) => ids.map(id => [id, titulo.toLowerCase()]))
+);
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
+const EXTS_VALIDAS = new Set(['.zip', '.xlsx', '.csv', '.xls']);
+
 function leerHistorial() {
   if (!fs.existsSync(CARPETA_DESCARGAS)) return [];
 
@@ -62,7 +81,8 @@ function leerHistorial() {
     for (const fecha of fechas) {
       const carpetaFecha = path.join(carpetaPlataforma, fecha);
       try {
-        const archivos = fs.readdirSync(carpetaFecha);
+        const archivos = fs.readdirSync(carpetaFecha)
+          .filter(f => EXTS_VALIDAS.has(path.extname(f).toLowerCase()));
         for (const archivo of archivos) {
           const stat = fs.statSync(path.join(carpetaFecha, archivo));
           resultados.push({
@@ -95,16 +115,23 @@ app.get('/', (req, res) => {
 
   const filasHistorial = historial.length === 0
     ? '<tr><td colspan="5" style="text-align:center;color:#888;padding:20px">Sin descargas aún</td></tr>'
-    : historial.map(h => `
-        <tr>
+    : historial.map(h => {
+        // Filas con plataforma desconocida reciben data-pais="" y quedan ocultas al filtrar
+        const pais = PLATAFORMA_PAIS[h.plataformaId] || '';
+        return `
+        <tr data-pais="${pais}">
           <td><span class="badge" style="background:${PLATAFORMAS[h.plataformaId]?.color || '#888'}">${h.plataforma}</span></td>
           <td>${h.fecha}</td>
           <td style="font-family:monospace;font-size:12px">${h.archivo}</td>
           <td>${formatBytes(h.tamano)}</td>
           <td><a href="/descargas/${h.ruta.replace(/\\/g, '/')}" download>${h.archivo}</a></td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
 
-  const botonesPlataformas = Object.entries(PLATAFORMAS).map(([id, cfg]) => `
+  const seccionesHTML = SECCIONES.map(({ titulo, ids }) => {
+    const cards = ids.map(id => {
+      const cfg = PLATAFORMAS[id];
+      return `
     <div class="card">
       <div class="platform-header" style="border-left: 4px solid ${cfg.color}">
         <strong>${cfg.label}</strong>
@@ -118,7 +145,25 @@ app.get('/', (req, res) => {
         ▶ Descargar ahora
       </button>
       <div class="log" id="log-${id}"></div>
-    </div>`).join('');
+    </div>`;
+    }).join('');
+    return `
+  <div class="seccion" data-pais="${titulo.toLowerCase()}">
+    <h2 class="pais-titulo">${titulo}</h2>
+    <div class="grid">${cards}</div>
+  </div>`;
+  }).join('');
+
+  // Selector generado desde SECCIONES — al agregar países futuros aparece solo aquí.
+  // Base para cuando el país venga del usuario logueado en vez de elegirse a mano.
+  const opcionesSelector = SECCIONES
+    .map(({ titulo }) => `<option value="${titulo.toLowerCase()}">${titulo}</option>`)
+    .join('');
+  const selectorHTML = `
+  <div class="filtro-pais">
+    <label for="selector-pais">País:</label>
+    <select id="selector-pais">${opcionesSelector}</select>
+  </div>`;
 
   res.send(`<!DOCTYPE html>
 <html lang="es">
@@ -133,7 +178,12 @@ app.get('/', (req, res) => {
     header h1 { font-size: 20px; font-weight: 600; }
     main { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
     h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .05em; color: #666; margin-bottom: 12px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-bottom: 32px; }
+    .seccion { margin-bottom: 36px; }
+    .pais-titulo {
+      font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+      color: #444; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid #ddd;
+    }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
     .card { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
     .platform-header { padding: 6px 10px; margin-bottom: 12px; background: #fafafa; border-radius: 4px; }
     .btn-descargar {
@@ -158,6 +208,9 @@ app.get('/', (req, res) => {
     a:hover { text-decoration: underline; }
     .status-ok { color: #22863a; }
     .status-err { color: #cb2431; }
+    .filtro-pais { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; }
+    .filtro-pais label { font-size: 13px; color: #555; font-weight: 500; }
+    .filtro-pais select { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; background: white; cursor: pointer; }
     .date-range { margin-bottom: 10px; display: flex; flex-direction: column; gap: 5px; }
     .date-range label { font-size: 11px; color: #666; display: flex; justify-content: space-between; align-items: center; gap: 6px; }
     .date-range input[type="date"] { flex: 1; padding: 3px 5px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
@@ -166,8 +219,8 @@ app.get('/', (req, res) => {
 <body>
   <header><h1>Panel de Liquidaciones</h1></header>
   <main>
-    <h2>Plataformas</h2>
-    <div class="grid">${botonesPlataformas}</div>
+    ${selectorHTML}
+    ${seccionesHTML}
 
     <h2>Historial de descargas</h2>
     <table>
@@ -181,6 +234,23 @@ app.get('/', (req, res) => {
   </main>
 
   <script>
+    // Filtrado por país — a futuro el país vendría del usuario logueado en vez de elegirse a mano.
+    const selectorPais = document.getElementById('selector-pais');
+    const todasSecciones = document.querySelectorAll('.seccion');
+
+    function filtrarPais(pais) {
+      todasSecciones.forEach(sec => {
+        sec.style.display = sec.dataset.pais === pais ? '' : 'none';
+      });
+      // Filas con data-pais desconocido ('') no coinciden con ningún país → siempre ocultas
+      document.querySelectorAll('#tabla-historial tr[data-pais]').forEach(tr => {
+        tr.style.display = tr.dataset.pais === pais ? '' : 'none';
+      });
+    }
+
+    filtrarPais(selectorPais.value); // Argentina por defecto (primera opción de SECCIONES)
+    selectorPais.addEventListener('change', () => filtrarPais(selectorPais.value));
+
     document.querySelectorAll('.btn-descargar').forEach(btn => {
       btn.addEventListener('click', async () => {
         const plataforma = btn.dataset.plataforma;
