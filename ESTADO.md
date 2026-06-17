@@ -1,18 +1,19 @@
 # Estado del Proyecto — Liquidaciones
 
-**Fecha de última actualización:** 2026-06-16 (Drive centralizado en config.js, parametrización Uber, preparación Chile)
+**Fecha de última actualización:** 2026-06-17 (PedidosYa Chile funcional: detección automática de fila ÚLTIMA/más reciente)
 
 ---
 
 ## 1. Estado actual
 
-### PedidosYa — FUNCIONA
+### PedidosYa — FUNCIONA (Argentina y Chile)
 
-- El motor descarga el ZIP de la liquidación "ÚLTIMA" de cada local activo de la cuenta.
+- El motor descarga el ZIP de la liquidación más reciente de cada local activo, con **detección automática de formato por portal**:
+  - **Argentina:** la página muestra una fila etiquetada "ÚLTIMA". El script la detecta en los primeros 3 segundos y descarga esa fila.
+  - **Chile:** la página no tiene etiqueta "ÚLTIMA"; las filas solo muestran el período de venta ordenadas de más reciente a más antigua. El script detecta la ausencia (timeout corto de 3 s) y descarga automáticamente la primera fila (la más reciente).
 - La lista de locales se obtiene automáticamente del endpoint `/contracts`: varía día a día según las nuevas captaciones del equipo comercial. No es necesario mantener ninguna lista manual.
-- Probado con ~142 locales. Corre sin intervención una vez que la sesión está guardada.
-- Sesión guardada en: `./sesiones/argentina.json`
-- **Listo para Chile sin cambios de código.** Solo se necesita `node login.js chile` cuando haya acceso. La sesión irá a `./sesiones/chile.json` y las descargas a `G:\Mi unidad\Liquidaciones\chile\`.
+- Probado con ~142 locales (Argentina) y 108 locales (Chile, 3/3 en prueba de validación). Corre sin intervención una vez que la sesión está guardada.
+- Sesión guardada en: `./sesiones/argentina.json` (Argentina) · `./sesiones/chile.json` (Chile).
 
 ### Uber Eats — FUNCIONA
 
@@ -93,8 +94,8 @@ node descargar.js argentina
 
 El script:
 1. Carga `/finance-py` para disparar el fetch de `/contracts` y obtener la lista de locales.
-2. Recorre cada local, navega a su página de estados de cuenta y descarga el ZIP de la fila "ÚLTIMA".
-3. Guarda los archivos en `G:\Mi unidad\Liquidaciones\argentina\<fecha-de-hoy>\`.
+2. Recorre cada local, navega a su página de estados de cuenta y descarga el ZIP más reciente. En Argentina detecta la fila "ÚLTIMA"; en Chile (sin esa etiqueta) descarga automáticamente la primera fila de la lista.
+3. Guarda los archivos en `G:\Mi unidad\Liquidaciones\<pais>\<fecha-de-hoy>\`.
 
 ---
 
@@ -248,12 +249,12 @@ Cuando algo falla, `descargar-rappi.js` genera screenshots automáticos en la ra
 
 | Motor | Estado | Qué falta |
 |---|---|---|
-| PedidosYa | ✅ Listo sin cambios de código | Solo `node login.js chile` cuando haya acceso |
+| PedidosYa | ✅ **FUNCIONA** | Listo para producción. Detección automática activa (probado 108 locales Chile) |
 | Uber Eats | ✅ Parametrizado (`descargar-uber.js chile`) | Login con cuenta chilena; verificar que `login-uber.js` acepte país como argumento |
 | Rappi | — | No aplica por ahora |
 | MercadoPago | — | No aplica para Chile |
 
-**Nota PedidosYa:** El script navega directo a la URL `/finance-py` sin tocar el sidebar, por lo que la diferencia de menú (Argentina tiene dos links, Chile tiene uno solo llamado "Finanzas") no afecta la automatización.
+**Nota PedidosYa:** El script navega directo a la URL `/finance-py` sin tocar el sidebar, por lo que la diferencia de menú (Argentina tiene dos links, Chile tiene uno solo llamado "Finanzas") no afecta la automatización. La diferencia en el portal (etiqueta "ÚLTIMA" vs. orden por fecha) se resuelve automáticamente sin configuración.
 
 ---
 

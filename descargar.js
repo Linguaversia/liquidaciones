@@ -104,7 +104,7 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
     console.log(`MODO PRUEBA: solo los primeros ${locales.length} locales.`);
   }
 
-  // --- Paso 2: recorrer cada local y descargar el ZIP de "ÚLTIMA" ---
+  // --- Paso 2: recorrer cada local y descargar el ZIP más reciente ---
   let ok = 0;
   const fallos = [];
   let screenshotFalloTomado = false;
@@ -118,13 +118,20 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
         { waitUntil: 'domcontentloaded', timeout: 30000 }
       );
 
-      // Esperar a que aparezca el badge ÚLTIMA
-      const badgeUltima = page.locator(':text("ÚLTIMA")').first();
-      await badgeUltima.waitFor({ timeout: 30000 });
+      // Esperar a que la tabla cargue (al menos un botón de descarga visible)
+      await page.locator('[aria-label="downloadAccountStatus"]').first().waitFor({ timeout: 30000 });
 
-      // El botón de descarga del estado de cuenta está en la misma fila (tr)
-      const filaUltima = badgeUltima.locator('xpath=ancestor::tr[1]');
-      const botonDescarga = filaUltima.locator('[aria-label="downloadAccountStatus"]');
+      // Intentar fila "ÚLTIMA" (Argentina); si no existe en 3 s → primera fila (Chile)
+      let botonDescarga;
+      try {
+        const badgeUltima = page.locator(':text("ÚLTIMA")').first();
+        await badgeUltima.waitFor({ timeout: 3000 });
+        const filaUltima = badgeUltima.locator('xpath=ancestor::tr[1]');
+        botonDescarga = filaUltima.locator('[aria-label="downloadAccountStatus"]');
+      } catch {
+        // Sin etiqueta "ÚLTIMA" (ej. Chile): primera fila = la más reciente
+        botonDescarga = page.locator('[aria-label="downloadAccountStatus"]').first();
+      }
 
       const [download] = await Promise.all([
         page.waitForEvent('download', { timeout: 30000 }),
@@ -139,7 +146,7 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
     } catch (err) {
       console.log(`  ERROR ${etiqueta}: ${err.message.split('\n')[0]}`);
       if (!screenshotFalloTomado) {
-        const screenshotPath = './diagnostico-fallo-ultima.png';
+        const screenshotPath = './diagnostico-fallo-descarga.png';
         await page.screenshot({ path: screenshotPath, fullPage: false });
         console.log(`  Screenshot del primer fallo: ${screenshotPath}`);
         screenshotFalloTomado = true;
