@@ -22,7 +22,7 @@ const args = process.argv.slice(3);
 // Las fechas se reconocen por su formato YYYY-MM-DD (en cualquier posición).
 // El flag de prueba se acepta como 'prueba' o '--prueba', también en cualquier posición.
 const esFecha = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s);
-const modoPrueba = args.some(a => /^--?prueba$/i.test(a));
+const modoPrueba = args.some(a => /^-{0,2}prueba$/i.test(a));
 const fechas = args.filter(esFecha);
 const desde = fechas[0];
 const hasta = fechas[1];
