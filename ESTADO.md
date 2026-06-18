@@ -1,6 +1,6 @@
 # Estado del Proyecto — Liquidaciones
 
-**Fecha de última actualización:** 2026-06-18 (Rappi: generación por POST directo con access_token — criterios nuevos de Finanzas operativos, sin dependencia de la tabla paginada)
+**Fecha de última actualización:** 2026-06-18 (Rappi terminado: captura completa multi-marca "Todas" + paginación del endpoint ~1715, Fase 2 por GET directo por ID, modo solo-descarga — corrida real 194/194)
 
 ---
 
@@ -59,32 +59,46 @@ Saltea la obtención de la lista completa del endpoint `/contracts` y procesa so
 - Sesión guardada en: `./sesiones/mercadopago-argentina/sesion.json`
 - MercadoPago no aplica para Chile (solo argentina por ahora).
 
-### Rappi — FUNCIONA (Argentina)
+### Rappi — FUNCIONA (Argentina), captura completa multi-marca
 
-- El motor navega a Financiero, amplía el período a "Últimos 30 días", captura los pagos vía el endpoint `paid-lot/by-stores`, **genera los reportes XLS por POST directo en Fase 1** y los descarga interceptando la red en Fase 2.
-- **Criterios nuevos de Finanzas operativos** (reemplazan al viejo filtro de Estado "Pagado"): se descarga una fila **si y solo si** `paid_date` cae dentro del rango `[desde, hasta]` (inclusive ambos extremos) **Y** `total` (Valor a transferir) es distinto de exactamente 0 (positivos y negativos sí; solo se saltea el 0).
-- **Parámetros:** `node descargar-rappi.js argentina <desde> <hasta>` con ambas fechas obligatorias en formato `YYYY-MM-DD`. Sin las fechas aborta con error claro (no asume período por defecto — hay dinero de por medio). El flag `prueba` se detecta en cualquier posición (limita a los primeros 3 pagos).
-- **Validado end-to-end (2026-06-18):** la compuerta del POST dio HTTP 200 y se generaron + descargaron 3/3 reportes con `total ≠ 0` dentro del rango.
+- Flujo: navega a Financiero, amplía a "Últimos 30 días", **selecciona "Todas" las marcas**, **captura todos los pagos paginando el endpoint `paid-lot/by-stores`** (~1715), filtra localmente, **genera los reportes por POST directo (Fase 1)** y los **descarga por GET directo por ID (Fase 2)**.
+- **Criterios de Finanzas:** se descarga una fila **si y solo si** `paid_date` ∈ `[desde, hasta]` (inclusive) **Y** `total` (Valor a transferir) ≠ 0 exacto (positivos y negativos sí; solo se saltea el 0).
+- **Validado end-to-end (2026-06-18):** corrida real del 17/06 → **1715 pagos capturados (575 tiendas), 194 pasan el filtro, 194/194 descargados** sin duplicados. La descarga completa por GET directo tarda **~3 min**.
 - **Cadencia:** correr **cada miércoles** (día de pago de Rappi).
 - Sesión guardada en: `./sesiones/rappi-argentina.json`
 
-#### Fase 1 por POST directo (elimina la dependencia de la tabla paginada)
-
-Antes, Fase 1 buscaba cada pago **como una fila en la tabla visual** y clickeaba "Descargar relación de ventas". Esto fallaba ("no visible en tabla") para todos los pagos fuera de la página actual: la tabla tiene **hasta 115 páginas**, así que en una corrida real se perderían la mayoría de los pagos.
-
-Ahora Fase 1 **genera cada reporte con un POST directo** al endpoint, usando los IDs (`paid_lot_id`) que ya tenemos en memoria del endpoint `paid-lot/by-stores`. No depende de la tabla, ni de la paginación, ni de navegar al detalle:
+#### Modos de uso
 
 ```
-POST https://services.rappi.com/rests-partners-gateway/cauth/api/partner-report/v1/report?country=AR
-body JSON: { "paid_lot_id": <id>, "type": "RESTAURANT" }
+# Normal: genera (Fase 1) + descarga (Fase 2) todo el rango
+node descargar-rappi.js argentina <desde> <hasta>
+
+# Prueba: igual pero limita a los primeros 10 pagos
+node descargar-rappi.js argentina <desde> <hasta> prueba
+
+# Solo descarga: saltea Fase 1 (NO regenera), baja directo por ID los ya generados
+node descargar-rappi.js argentina <desde> <hasta> solo-descarga
 ```
 
-Una **compuerta dura** prueba el POST con 1 pago primero y solo sigue con el resto si devuelve 2xx; si falla, vuelca status+body y aborta sin generar nada.
+Ambas fechas son obligatorias (`YYYY-MM-DD`); sin ellas aborta con error (no asume período — hay dinero de por medio). Los flags `prueba`/`--prueba` y `solo-descarga`/`--descarga` se detectan en cualquier posición. **Modo solo-descarga** sirve para recuperar descargas faltantes sin volver a generar los reportes en Rappi.
 
-#### Pendiente
+#### Selector "Todas las marcas"
 
-- **Prueba multi-marca:** el selector de marcas está implementado y la captura de pagos itera por todas, pero no se probó en producción con una cuenta de 2+ marcas reales.
-- **Paginación de la pestaña Reportes (Fase 2):** la descarga sigue buscando el archivo en la lista de *Reportes* por nombre; con muchos reportes esa lista podría paginar. No observado aún; revisar si aparece en la corrida completa.
+El selector de marca por defecto muestra solo la marca activa (ej. "Baku"), y el endpoint devuelve solo ese grupo. El script abre el chip "Marca:", **tilda "Todas" y aplica** para que el endpoint devuelva las 575 tiendas. Detecta el dropdown por el **texto "Todas" visible** (no por la clase del contenedor). Si no encuentra el chip / "Todas" / "Aplicar", **aborta ruidosamente** (mejor que descargar incompleto).
+
+#### Paginación del endpoint `paid-lot/by-stores`
+
+Es un **POST paginado**: el body lleva `stores_ids`, `page`, `size`, `start_date`, `end_date`; el total real viene en **`total_elements_without_pagination`** (no en `total_elements`, que es por-página). El script toma el body de la llamada de "Todas" (la de más `stores_ids` = 575), y **replica el POST paginando con `size` 100** (fallback a 15 si hay error HTTP) hasta juntar el total (~1715), con pausa de 400ms entre páginas.
+
+- **Fechas:** se deja la **ventana amplia del portal**; solo se *ensancha* para cubrir `[desde, hasta]`, **nunca se recorta**. El filtro local por `paid_date` es el decisor final (evita el riesgo de que `start_date`/`end_date` filtren por período de venta y se pierdan pagos).
+
+#### Fase 1 — Generación por POST directo
+
+Genera cada reporte con `POST .../partner-report/v1/report?country=AR` body `{ paid_lot_id, type:"RESTAURANT" }`, usando los IDs ya capturados. No depende de la tabla visual (que tiene hasta 115 páginas). Pausa de 700ms entre POSTs. **Compuerta dura:** prueba 1 POST y solo sigue si da 2xx.
+
+#### Fase 2 — Descarga por GET directo por ID
+
+Descarga cada reporte con `GET .../partner-report/v1/report?country=AR&paid_lot_id=<ID>` (con `access_token` + headers de origen). **No depende de la pestaña Reportes** (que está paginada y solo mostraba ~15 → antes fallaban 179/194). Valida que la respuesta sea un **XLS real por magic bytes** (`D0CF11E0` .xls / `50 4B` .xlsx), descartando JSON/HTML de error. **Sobrescribe** el archivo por ID (`fs.writeFileSync`) → un pago = un archivo, **sin duplicados `(1).xls`**. Pausa de 400ms entre descargas. **Compuerta dura:** prueba 1 descarga y solo sigue si es XLS válido.
 
 ### Panel web — FUNCIONA
 
@@ -228,19 +242,23 @@ Abre el navegador en `partners.rappi.com/login`. Hacé login (correo + contrase�
 Ambas fechas (`<desde>` `<hasta>`) son **obligatorias** en formato `YYYY-MM-DD`. Sin ellas el script aborta con error (no asume período por defecto).
 
 ```
-# Prueba: solo los primeros 3 pagos del rango
+# Producción: genera + descarga todos los pagos del rango
+node descargar-rappi.js argentina 2026-06-17 2026-06-17
+
+# Prueba: solo los primeros 10 pagos del rango
 node descargar-rappi.js argentina 2026-06-17 2026-06-17 prueba
 
-# Producción: todos los pagos del rango
-node descargar-rappi.js argentina 2026-06-17 2026-06-17
+# Solo descarga: NO regenera; baja por ID los reportes ya generados
+node descargar-rappi.js argentina 2026-06-17 2026-06-17 solo-descarga
 
 # Un rango de varios días
 node descargar-rappi.js argentina 2026-06-11 2026-06-17
 ```
 
-El script ejecuta dos fases:
-- **Fase 1:** Navega a Financiero > Resumen, amplía el período a "Últimos 30 días", captura los pagos del endpoint `paid-lot/by-stores`, filtra por `paid_date` en rango + `total ≠ 0`, y **genera cada reporte con un POST directo** (`partner-report/v1/report`, con el `access_token` de localStorage). Ya no busca filas en la tabla ni navega al detalle.
-- **Fase 2:** Va a la pestaña Reportes, intercepta la descarga del XLS via `page.route()` y guarda cada archivo.
+El script ejecuta:
+- **Captura:** Financiero > "Últimos 30 días" > **"Todas" las marcas**, pagina el endpoint `paid-lot/by-stores` (~1715 pagos de 575 tiendas), y filtra por `paid_date` en rango + `total ≠ 0`.
+- **Fase 1 (generación):** genera cada reporte con `POST partner-report/v1/report` (`access_token` de localStorage). Se saltea en modo `solo-descarga`.
+- **Fase 2 (descarga):** baja cada XLS con `GET partner-report/v1/report?country=AR&paid_lot_id=<ID>`, valida que sea XLS real (magic bytes) y sobrescribe por ID (sin duplicados).
 - Guarda los archivos en `G:\Mi unidad\Liquidaciones\rappi-argentina\<fecha-de-hoy>\`.
 
 ---
@@ -292,9 +310,9 @@ G:\Mi unidad\Liquidaciones\          ← Google Drive (sincronizado, compartido 
 
 Cuando algo falla, `descargar-rappi.js` genera screenshots automáticos en la raíz:
 - `diagnostico-rappi.png` — estado de la pantalla si no se captura el endpoint
-- `diagnostico-marcas.png` / `diagnostico-marcas-dropdown.png` — selector de marcas
-- `fase1-antes.png`, `fase1-detalle.png`, `fase1-no-fila.png` — Fase 1
-- `fase2-tabla.png`, `fase2-no-encontrado-<id>.png`, `fase2-error-<id>.png` — Fase 2
+- `diag-marcas-dropdown.png` / `diag-marcas-todas.png` / `diag-marcas-error.png` — selector "Todas las marcas"
+
+Nota: Fase 1 (generación) y Fase 2 (descarga) ya no usan la tabla ni la pestaña Reportes (van por POST/GET directo por ID), así que no generan screenshots; los errores se reportan por consola (IDs con fallo) y las compuertas abortan ante el primer fallo.
 
 ---
 
@@ -342,17 +360,21 @@ GET https://management-api.pedidosya.com/v1/partners/contracts
 ```
 Devuelve el array completo de contratos activos de la cuenta. El script lo captura escuchando el evento `response` al navegar a `/finance-py`. Cada ítem tiene `id`, `referenceName`, `companyName`.
 
-### Rappi — endpoint clave
+### Rappi — endpoint de pagos (POST paginado)
 ```
-GET https://services.rappi.com/rests-partners-gateway/cauth/api/partner-report/paid-lot/by-stores?country=AR
+POST https://services.rappi.com/rests-partners-gateway/cauth/api/partner-report/paid-lot/by-stores?country=AR
+body: { stores_ids:[...], page, size, start_date, end_date, filter:"paidlot", in_progress:false }
 ```
-Devuelve `{ total_elements, content: [...], in_progress }`. Cada ítem tiene `id` (= `paid_lot_id`), `brand_name`, `status` (`PAID` | `UNPAYABLE`), `start_date`, `end_date`, `paid_date`, `total`.
+Devuelve `{ content:[...], total_elements (por página), total_elements_without_pagination (TOTAL real), ... }`. Cada ítem tiene `id` (= `paid_lot_id`), `brand_name`, `start_date`, `end_date`, `paid_date`, `total`, `stores`. **Es brand-filtered:** con una marca activa devuelve solo ese grupo; con "Todas" tildado, el body trae los `stores_ids` de las 575 tiendas. Se pagina replicando el POST (`page` 0..N, `size` 100) hasta `total_elements_without_pagination` (~1715).
 
-### Rappi — generación por POST directo: token y headers (clave para el futuro)
-Fase 1 genera los reportes con `context.request.post` a `partner-report/v1/report?country=AR` (body `{ paid_lot_id, type: "RESTAURANT" }`). Dos detalles que costaron sangre y son la causa de los 403:
+### Rappi — token y headers para las requests directas (clave para el futuro)
+Tanto la generación (Fase 1, POST) como la descarga (Fase 2, GET) van por `context.request` con auth manual. Dos detalles que costaron sangre y eran la causa de los 403:
 
-- **Token correcto = `access_token`, NO `id_token`.** La API espera el **access token** (en `localStorage`, clave directa `access_token`, ~2364 chars). El `id_token` (token de identidad, ~1572 chars) da **403**. Usar el access_token; nunca el id_token.
-- **Headers de origen obligatorios.** El POST necesita `Origin: https://partners.rappi.com` y `Referer: https://partners.rappi.com/` (más `Accept`, `Accept-Language`, `User-Agent` real del navegador). Sin ellos, 403. No hacen falta headers `x-*` personalizados (la request real no manda ninguno).
+- **Token correcto = `access_token`, NO `id_token`.** La API espera el **access token** (`localStorage`, clave directa `access_token`, ~2364 chars). El `id_token` (~1572) da **403**. Usar siempre el access_token; nunca el id_token.
+- **Headers de origen obligatorios:** `Origin: https://partners.rappi.com` + `Referer: https://partners.rappi.com/` (más `Accept`, `Accept-Language`, `User-Agent` real). Sin ellos, 403. No hacen falta headers `x-*` (la request real no manda ninguno).
 
-### Rappi — por qué interceptamos la red en Fase 2 en lugar de `page.goto()`
-La URL directa del reporte (`/api/partner-report/v1/report?country=AR&paid_lot_id=<ID>`) requiere el Bearer token del browser. `page.goto()` no lo incluye. La solución es ir a la pestaña Reportes, registrar un `page.route()` filtrado por `paid_lot_id`, y clickear el link del archivo — Playwright re-envía la request con todos los headers del browser via `route.fetch()`.
+### Rappi — descarga (Fase 2) por GET directo por ID
+```
+GET https://services.rappi.com/rests-partners-gateway/cauth/api/partner-report/v1/report?country=AR&paid_lot_id=<ID>
+```
+Con el `access_token` + headers de arriba, `context.request.get` devuelve el XLS directo. **No se usa la pestaña Reportes** (está paginada y solo mostraba ~15 reportes → con 194 fallaban 179). Se valida que la respuesta sea XLS real por **magic bytes** (`D0CF11E0` para .xls / `50 4B` para .xlsx) y se descarta JSON/HTML. Se guarda con `fs.writeFileSync` (sobrescribe → sin duplicados `(1).xls`).
