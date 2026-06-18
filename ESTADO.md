@@ -1,6 +1,6 @@
 # Estado del Proyecto — Liquidaciones
 
-**Fecha de última actualización:** 2026-06-18 (Rappi terminado: captura completa multi-marca "Todas" + paginación del endpoint ~1715, Fase 2 por GET directo por ID, modo solo-descarga — corrida real 194/194)
+**Fecha de última actualización:** 2026-06-18 (Panel: fechas obligatorias para Rappi —arregla el botón roto— + validación de formato; Rappi: detección de sesión vencida con mensaje claro + exit 2 y red de seguridad anti-crash)
 
 ---
 
@@ -100,11 +100,25 @@ Genera cada reporte con `POST .../partner-report/v1/report?country=AR` body `{ p
 
 Descarga cada reporte con `GET .../partner-report/v1/report?country=AR&paid_lot_id=<ID>` (con `access_token` + headers de origen). **No depende de la pestaña Reportes** (que está paginada y solo mostraba ~15 → antes fallaban 179/194). Valida que la respuesta sea un **XLS real por magic bytes** (`D0CF11E0` .xls / `50 4B` .xlsx), descartando JSON/HTML de error. **Sobrescribe** el archivo por ID (`fs.writeFileSync`) → un pago = un archivo, **sin duplicados `(1).xls`**. Pausa de 400ms entre descargas. **Compuerta dura:** prueba 1 descarga y solo sigue si es XLS válido.
 
+#### Detección de sesión vencida y códigos de salida
+
+Las sesiones de Rappi caen seguido. **Detalle clave:** cuando la sesión vence, Rappi **NO redirige a `/login`** — la URL sigue siendo la raíz y muestra el **formulario de login en la misma página** (campo `input[type="password"]`, confirmado). Por eso se detecta por **contenido, no por URL**.
+
+Apenas navega (antes de toda la captura), `estadoSesion()` hace una **carrera con `Promise.any`** entre señales de login (password / botón "Ingresar" / texto "Accede a tu cuenta" → `vencida`) y señales del panel (link "Financiero" → `valida`). Gana la primera que aparece, sin penalizar el camino feliz (no espera fija larga). Si la sesión venció:
+
+```
+⚠ Sesión de Rappi vencida. Renová con: node login-rappi.js argentina
+```
+y termina con **exit 2**, en vez del stack crudo de Node. Una **red de seguridad** (`.catch` en la IIFE principal) captura cualquier otra excepción imprevista y la imprime como una línea legible (en vez del stack), cerrando el navegador.
+
+**Códigos de salida:** `0` OK · `1` error genérico (faltan fechas, captura fallida, etc.) · `2` sesión vencida (accionable). Pensado para que el futuro servidor/panel mapee el 2 a un mensaje propio para Finanzas.
+
 ### Panel web — FUNCIONA
 
 - Servidor Express en `localhost:3000` (`node panel.js`) para ejecutar descargas sin abrir terminales.
 - Muestra historial de archivos descargados ordenado por fecha de modificación.
-- Uber Eats y Mercado Pago tienen campos opcionales `desde` / `hasta`; PedidosYa y Rappi no.
+- **Fechas por plataforma:** Uber Eats y Mercado Pago tienen `desde`/`hasta` **opcionales** (`fechasOpcionales`); **Rappi** las tiene **obligatorias** (`fechasRequeridas`) con aviso visual "Fechas obligatorias". El frontend exige ambas antes de mandar el POST; el backend responde 400 si faltan. Esto **arregló el botón de Rappi, que estaba roto** (el script ahora exige dos fechas y el botón las mandaba vacías). PedidosYa no usa fechas.
+- **Seguridad:** validación de formato estricto `YYYY-MM-DD` (regex `ES_FECHA`) en el backend antes del `spawn`, **compartida por todas las plataformas** → cierra la superficie de inyección del `shell:true` (las fechas del date-picker siempre pasan; solo se rechazan valores malformados). 400 si el formato no matchea.
 - Descarga de archivos desde el historial vía `/descargas/...`.
 
 ---
@@ -333,10 +347,12 @@ Nota: Fase 1 (generación) y Fase 2 (descarga) ya no usan la tabla ni la pestañ
 
 ### Prioritario
 
+- [ ] **Rappi — validar camino feliz del detector de sesión (mañana 2026-06-19):** con la sesión renovada (`node login-rappi.js argentina`), confirmar que `estadoSesion()` deja pasar (gana "Financiero") y sigue la captura normal. El caso de **sesión vencida ya quedó validado hoy** (mensaje claro + exit 2). Pendiente solo el camino feliz porque hoy no se pudo renovar la sesión.
 - [ ] **Uber — formato XLSX:** el portal entrega CSV por defecto. Investigar si el formulario tiene selector de formato o si se configura en el perfil de la cuenta. Ver `UBER-DEBUGGING-LOG.md` sección 5.
-- [ ] **Prueba multi-marca Rappi:** correr `descargar-rappi.js` con una cuenta que tenga 2+ marcas y verificar que el selector de marcas funciona (el código está escrito pero nunca se ejecutó ese camino en producción).
-- [ ] **Manejo de sesión expirada:** si alguna sesión expira, el script falla silenciosamente (navega pero no encuentra los datos). Habría que detectarlo y avisar claramente.
+- [ ] **Manejo de sesión expirada (otros motores):** Rappi ya detecta sesión vencida (carrera login-vs-panel + exit 2). PedidosYa / Uber / MercadoPago todavía fallan de forma poco clara si la sesión expira — replicar un detector equivalente en cada uno.
 - [ ] **Chile — verificar `login-uber.js`:** confirmar que acepta país como argumento (o adaptarlo) antes de tener el acceso chileno.
+
+> Nota: la **prueba multi-marca de Rappi** quedó resuelta (corrida real con "Todas" → 575 tiendas / 1715 pagos, 194/194 descargados).
 
 ### Revisión antes de producción compartida
 

@@ -25,6 +25,7 @@ const PLATAFORMAS = {
     args: ['descargar-rappi.js', 'argentina'],
     carpeta: 'rappi-argentina',
     color: '#FF441F',
+    fechasRequeridas: true,
   },
   uber: {
     label: 'Uber Eats',
@@ -63,6 +64,7 @@ const PLATAFORMA_PAIS = Object.fromEntries(
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 const EXTS_VALIDAS = new Set(['.zip', '.xlsx', '.csv', '.xls']);
+const ES_FECHA = /^\d{4}-\d{2}-\d{2}$/;   // formato estricto (cierra inyección por shell:true)
 
 function leerHistorial() {
   if (!fs.existsSync(CARPETA_DESCARGAS)) return [];
@@ -136,12 +138,13 @@ app.get('/', (req, res) => {
       <div class="platform-header" style="border-left: 4px solid ${cfg.color}">
         <strong>${cfg.label}</strong>
       </div>
-      ${cfg.fechasOpcionales ? `
+      ${(cfg.fechasOpcionales || cfg.fechasRequeridas) ? `
       <div class="date-range">
+        ${cfg.fechasRequeridas ? '<span class="fechas-req">Fechas obligatorias</span>' : ''}
         <label>Desde <input type="date" class="input-desde" data-plataforma="${id}"></label>
         <label>Hasta  <input type="date" class="input-hasta" data-plataforma="${id}"></label>
       </div>` : ''}
-      <button class="btn-descargar" data-plataforma="${id}" style="border-color:${cfg.color};color:${cfg.color}">
+      <button class="btn-descargar" data-plataforma="${id}"${cfg.fechasRequeridas ? ' data-fechas-requeridas="1"' : ''} style="border-color:${cfg.color};color:${cfg.color}">
         ▶ Descargar ahora
       </button>
       <div class="log" id="log-${id}"></div>
@@ -214,6 +217,7 @@ app.get('/', (req, res) => {
     .date-range { margin-bottom: 10px; display: flex; flex-direction: column; gap: 5px; }
     .date-range label { font-size: 11px; color: #666; display: flex; justify-content: space-between; align-items: center; gap: 6px; }
     .date-range input[type="date"] { flex: 1; padding: 3px 5px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
+    .date-range .fechas-req { font-size: 10px; color: #cb2431; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
   </style>
 </head>
 <body>
@@ -262,8 +266,15 @@ app.get('/', (req, res) => {
         const desde = inputDesde ? inputDesde.value : '';
         const hasta  = inputHasta ? inputHasta.value  : '';
 
-        // Validación: ambas fechas o ninguna
-        if ((desde && !hasta) || (!desde && hasta)) {
+        // Validación de fechas
+        const requeridas = btn.dataset.fechasRequeridas === '1';
+        if (requeridas && (!desde || !hasta)) {
+          log.textContent = '⚠ Esta plataforma requiere ambas fechas (desde y hasta).';
+          log.style.color = '#f48771';
+          log.classList.add('visible');
+          return;
+        }
+        if (!requeridas && ((desde && !hasta) || (!desde && hasta))) {
           log.textContent = '⚠ Completá ambas fechas (desde y hasta) o dejá las dos vacías.';
           log.style.color = '#f48771';
           log.classList.add('visible');
@@ -323,9 +334,17 @@ app.post('/api/descargar/:plataforma', (req, res) => {
 
   // Añadir fechas al comando si la plataforma las soporta y el usuario las proporcionó
   let cmdArgs = [...cfg.args];
-  if (cfg.fechasOpcionales) {
+  if (cfg.fechasOpcionales || cfg.fechasRequeridas) {
     const { desde, hasta } = req.body || {};
-    if (desde && hasta) cmdArgs = [...cmdArgs, desde, hasta];
+    if (cfg.fechasRequeridas && (!desde || !hasta)) {
+      return res.status(400).json({ ok: false, error: 'Faltan fechas: desde y hasta son obligatorias (YYYY-MM-DD).' });
+    }
+    if (desde || hasta) {
+      if (!ES_FECHA.test(desde || '') || !ES_FECHA.test(hasta || '')) {
+        return res.status(400).json({ ok: false, error: 'Formato de fecha inválido. Usá YYYY-MM-DD.' });
+      }
+      cmdArgs = [...cmdArgs, desde, hasta];
+    }
   }
 
   const proc = spawn(cfg.cmd, cmdArgs, {

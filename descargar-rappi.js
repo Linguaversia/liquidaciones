@@ -67,8 +67,9 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
 // ─────────────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────────────
+let browser;
 (async () => {
-  const browser = await chromium.launch({
+  browser = await chromium.launch({
     headless: false,
     args: ['--start-maximized'],
   });
@@ -107,8 +108,50 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
 
   // ─── Paso 1: Navegar a Financiero ────────────────────────
   console.log('Navegando a Financiero > Resumen...');
-  await page.goto('https://partners.rappi.com', { waitUntil: 'networkidle' });
+  try {
+    await page.goto('https://partners.rappi.com', { waitUntil: 'networkidle' });
+  } catch (err) {
+    console.log(`  (page.goto no llegó a networkidle: ${err.message.split('\n')[0]})`);
+  }
   await page.waitForTimeout(2000);
+
+  // Determina el estado de la sesión por CARRERA: la primera señal que aparezca
+  // decide. Login (sesión vencida) — Rappi NO redirige a /login, muestra el
+  // formulario en la misma raíz — vs. panel (sesión OK). Con sesión válida nunca
+  // aparece el password → gana el panel; con vencida nunca aparece "Financiero"
+  // → gana el login. Sin penalizar ninguna rama (no hay espera fija larga).
+  const estadoSesion = async () => {
+    const TIMEOUT = 15000;
+    const visible = (loc, resultado) =>
+      loc.first().waitFor({ state: 'visible', timeout: TIMEOUT }).then(() => resultado);
+
+    const señales = [
+      // Login → sesión vencida
+      visible(page.locator('input[type="password"]'), 'vencida'),
+      visible(page.getByRole('button', { name: /ingresar|iniciar sesi[oó]n/i }), 'vencida'),
+      visible(page.getByText(/accede a tu cuenta/i), 'vencida'),
+      // Panel → sesión válida
+      visible(page.getByRole('link', { name: /financiero/i }), 'valida'),
+      visible(page.getByText(/^financiero$/i), 'valida'),
+    ];
+
+    try {
+      return await Promise.any(señales);   // gana la primera señal visible
+    } catch {
+      return 'desconocido';                // ninguna apareció dentro del timeout
+    }
+  };
+
+  // ─── Detección de sesión (fail-fast, antes de capturar) ──────────────────
+  const estado = await estadoSesion();
+  if (estado === 'vencida') {
+    console.log('\n⚠ Sesión de Rappi vencida. Renová con: node login-rappi.js ' + pais);
+    await browser.close();
+    process.exit(2);
+  }
+  if (estado === 'desconocido') {
+    console.log('  (No se pudo confirmar el estado de sesión en 15s; continúo igual.)');
+  }
 
   const clickFinanciero = async () => {
     try {
@@ -560,4 +603,10 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
 
   await browser.close();
   process.exit(0);
-})();
+})().catch(async (err) => {
+  // Red de seguridad: cualquier rejection no contemplada sale como UNA línea
+  // legible (no el stack crudo de Node) y cierra el navegador.
+  console.log('✗ Error inesperado: ' + (err?.message?.split('\n')[0] || err));
+  try { if (browser) await browser.close(); } catch {}
+  process.exit(1);
+});
