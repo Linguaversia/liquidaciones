@@ -1,6 +1,6 @@
 # Estado del Proyecto — Liquidaciones
 
-**Fecha de última actualización:** 2026-06-17 (PedidosYa Chile funcional: detección automática de fila ÚLTIMA/más reciente)
+**Fecha de última actualización:** 2026-06-17 (Rappi: nuevos criterios de Finanzas + diagnóstico de campos en progreso)
 
 ---
 
@@ -36,12 +36,37 @@
 - Sesión guardada en: `./sesiones/mercadopago-argentina/sesion.json`
 - MercadoPago no aplica para Chile (solo argentina por ahora).
 
-### Rappi — DESCARGA CORRECTA (falta prueba multi-marca)
+### Rappi — DESCARGA CORRECTA · CAMBIO DE CRITERIOS EN PROGRESO
 
 - El motor navega a Financiero, amplía el período a "Últimos 30 días", captura los pagos vía el endpoint `paid-lot/by-stores`, genera los reportes XLS en Fase 1 y los descarga interceptando la red en Fase 2.
 - Probado con una sola marca activa: descarga funciona correctamente (~19-21 KB por archivo XLS).
 - **Pendiente:** verificar el flujo completo cuando la cuenta tiene múltiples marcas (el selector de marcas está implementado pero no se ha podido probar en producción con una cuenta multi-marca real).
 - Sesión guardada en: `./sesiones/rappi-argentina.json`
+
+#### 🚧 Trabajo en curso — nuevos criterios de descarga (Finanzas, Argentina)
+
+Finanzas **redefinió** qué filas se descargan. El criterio nuevo reemplaza al actual de Estado "Pagado":
+
+- **Descargar una fila si y solo si** se cumplen AMBAS condiciones:
+  1. La columna **"Fecha del pago"** (`paid_date`) cae dentro de un **rango desde/hasta** (inclusive ambos extremos) que el usuario indica al correr el script.
+  2. La columna **"Valor a transferir"** es **distinta de exactamente $0** (se descargan montos positivos Y negativos; solo se saltea el $0 exacto).
+- **Se ELIMINA** el filtro por columna "Estado" (ya no se usa "Pagado" para nada).
+- **NO** se usa "Periodo de venta" como criterio (varía entre tiendas).
+- **Se mantiene** sin cambios: iteración por todas las marcas, ampliar la vista a "Últimos 30 días", y todo el mecanismo de descarga (Fase 1 generar + Fase 2 interceptar).
+- **Cadencia:** correr **cada miércoles** (día de pago de Rappi).
+- **Parámetros nuevos:** dos fechas obligatorias en formato `YYYY-MM-DD`. Ej: `node descargar-rappi.js argentina 2026-06-17 2026-06-18` (un solo día: ambas iguales). Sin las fechas debe abortar con error claro (no asumir período por defecto — error grave con dinero de por medio). El flag `prueba` se detectará en cualquier posición.
+
+**Estado actual de la implementación:**
+
+- ⚠️ Hay un bloque de **DIAGNÓSTICO TEMPORAL** agregado en `descargar-rappi.js` (vuelca los campos del JSON del endpoint y termina sin descargar nada). **Todavía NO se pudo correr** porque la sesión de Rappi expiró.
+- El **filtro nuevo aún NO está implementado**. El script sigue con el filtro viejo de Estado "Pagado" (que quedará reemplazado).
+
+**PENDIENTE (en orden):**
+
+1. Renovar sesión: `node login-rappi.js argentina`.
+2. Correr el diagnóstico: `node descargar-rappi.js argentina`.
+3. Identificar **contra la pantalla de Rappi** cuál campo del JSON corresponde a "Valor a transferir" (hay varios montos posibles; `total` es solo la hipótesis) y confirmar el **formato de `paid_date`** (ISO/timestamp vs. DD/MM/YYYY de pantalla).
+4. Recién después: implementar el filtro nuevo (rango de `paid_date` + valor ≠ 0) y **quitar el bloque de diagnóstico temporal**.
 
 ### Panel web — FUNCIONA
 

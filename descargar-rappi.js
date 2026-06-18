@@ -255,6 +255,34 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
     process.exit(1);
   }
 
+  // ─── DIAGNÓSTICO TEMPORAL ─────────────────────────────────
+  // Objetivo: confirmar qué campo del JSON es "Valor a transferir" y en qué
+  // formato viene "Fecha del pago" (paid_date), ANTES de cambiar el filtro.
+  // Quitar este bloque una vez confirmados los nombres/formatos reales.
+  {
+    console.log('\n═══ DIAGNÓSTICO DE CAMPOS (muestra por marca) ═══');
+    const marcasVistas = new Set();
+    for (const p of pagosCapturados) {
+      const marca = p.brand_name ?? '?';
+      if (marcasVistas.has(marca)) continue;
+      marcasVistas.add(marca);
+      const numericos = Object.entries(p)
+        .filter(([, v]) => typeof v === 'number')
+        .map(([k, v]) => `${k}=${v}`);
+      const fechas = Object.entries(p)
+        .filter(([k]) => /date|fecha/i.test(k))
+        .map(([k, v]) => `${k}=${JSON.stringify(v)} (typeof ${typeof v})`);
+      console.log(`\n── Marca: ${marca} ──`);
+      console.log('  Campos numéricos:', numericos.join('  |  ') || '(ninguno)');
+      console.log('  Campos fecha:    ', fechas.join('  |  ') || '(ninguno)');
+    }
+    console.log('\n  Objeto completo de la primera fila (todos los campos y tipos):');
+    console.log(JSON.stringify(pagosCapturados[0], null, 2));
+    console.log('\n═══ FIN DIAGNÓSTICO — no se descargó nada. ═══');
+    await browser.close();
+    process.exit(0);
+  }
+
   // ─── Detectar campos clave ────────────────────────────────
   const primera = pagosCapturados[0];
   console.log('Claves del primer ítem:', Object.keys(primera).join(', '));
