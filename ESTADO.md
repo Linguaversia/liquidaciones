@@ -1,6 +1,6 @@
 # Estado del Proyecto — Liquidaciones
 
-**Fecha de última actualización:** 2026-06-17 (Rappi: nuevos criterios de Finanzas + diagnóstico de campos en progreso)
+**Fecha de última actualización:** 2026-06-17 (PedidosYa: modo reintentar por IDs + clasificación de locales sin liquidaciones; Rappi: nuevos criterios de Finanzas + diagnóstico de campos en progreso)
 
 ---
 
@@ -14,6 +14,29 @@
 - La lista de locales se obtiene automáticamente del endpoint `/contracts`: varía día a día según las nuevas captaciones del equipo comercial. No es necesario mantener ninguna lista manual.
 - Probado con ~142 locales (Argentina) y 108 locales (Chile, 3/3 en prueba de validación). Corre sin intervención una vez que la sesión está guardada.
 - Sesión guardada en: `./sesiones/argentina.json` (Argentina) · `./sesiones/chile.json` (Chile).
+
+**Clasificación de tres estados por local (resumen final separado):**
+
+Al recorrer cada local, el script ahora distingue tres resultados en vez de OK/error binario:
+
+- **Descargado:** el local tiene liquidaciones y el ZIP se bajó correctamente.
+- **Sin liquidaciones:** el portal muestra "Aún no tienes liquidaciones disponibles para este contrato" (locales nuevos, dados de baja o sin movimientos). **Es un caso esperable, NO un error.** Se detecta con una carrera entre el botón de descarga y ese mensaje, así un local vacío se resuelve rápido sin esperar el timeout de 30 s.
+- **Fallos reales:** ni el botón ni el mensaje aparecen dentro del timeout → problema genuino (red caída, sesión vencida). Estos sí hay que reintentar.
+
+El resumen final separa las tres categorías con sus IDs:
+```
+Descargados: 96.
+Sin liquidaciones: 12.
+  IDs sin liquidaciones: ...
+Fallos reales: 0.
+```
+Así un timeout real no se confunde con un local que simplemente no tiene datos. **Corrida completa de Chile (2026-06-17): 96 descargados, 12 sin liquidaciones, 0 fallos reales.**
+
+**Modo reintentar por IDs:** para reprocesar solo locales puntuales (típicamente los que quedaron en "Fallos reales") sin recorrer los ~108 de nuevo:
+```
+node descargar.js chile reintentar 127276,414520,140349
+```
+Saltea la obtención de la lista completa del endpoint `/contracts` y procesa solo los IDs indicados con la misma lógica de descarga (detección ÚLTIMA/primera-fila + clasificación de tres estados). Valida que los IDs sean numéricos y exige al menos uno. Los archivos caen en la misma carpeta del día.
 
 ### Uber Eats — FUNCIONA
 
@@ -115,12 +138,17 @@ node descargar.js argentina prueba
 
 # Producción: todos los locales
 node descargar.js argentina
+
+# Reintentar solo IDs puntuales (ej. los que quedaron en "Fallos reales")
+node descargar.js chile reintentar 127276,414520,140349
 ```
 
 El script:
 1. Carga `/finance-py` para disparar el fetch de `/contracts` y obtener la lista de locales.
-2. Recorre cada local, navega a su página de estados de cuenta y descarga el ZIP más reciente. En Argentina detecta la fila "ÚLTIMA"; en Chile (sin esa etiqueta) descarga automáticamente la primera fila de la lista.
+2. Recorre cada local, navega a su página de estados de cuenta y descarga el ZIP más reciente. En Argentina detecta la fila "ÚLTIMA"; en Chile (sin esa etiqueta) descarga automáticamente la primera fila de la lista. Clasifica cada local en descargado / sin liquidaciones / fallo real (ver arriba).
 3. Guarda los archivos en `G:\Mi unidad\Liquidaciones\<pais>\<fecha-de-hoy>\`.
+
+En **modo reintentar** (`node descargar.js <pais> reintentar <id1,id2,...>`) saltea el paso 1 y procesa solo los IDs dados con la misma lógica de los pasos 2-3.
 
 ---
 
