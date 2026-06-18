@@ -3,8 +3,11 @@
 // Fase 2: Descarga cada XLS con la URL directa usando el paid_lot_id.
 //
 // Uso:
-//   node descargar-rappi.js argentina prueba    -> solo los primeros 3 pagos
-//   node descargar-rappi.js argentina           -> todos los pagos del período
+//   node descargar-rappi.js argentina 2026-06-01 2026-06-17           -> rango de fechas
+//   node descargar-rappi.js argentina 2026-06-01 2026-06-17 prueba    -> solo los primeros 3 pagos
+//
+// Ambas fechas (desde y hasta) son obligatorias, en formato YYYY-MM-DD.
+// El flag "prueba"/"--prueba" se acepta en cualquier posición.
 //
 // Los archivos caen en ./descargas/rappi-<PAIS>/<fecha>/
 
@@ -14,10 +17,29 @@ const path = require('path');
 const { CARPETA_DESCARGAS } = require('./config');
 
 const pais = process.argv[2];
-const modo = process.argv[3]; // 'prueba' o vacío
+const args = process.argv.slice(3);
+
+// Las fechas se reconocen por su formato YYYY-MM-DD (en cualquier posición).
+// El flag de prueba se acepta como 'prueba' o '--prueba', también en cualquier posición.
+const esFecha = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+const modoPrueba = args.some(a => /^--?prueba$/i.test(a));
+const fechas = args.filter(esFecha);
+const desde = fechas[0];
+const hasta = fechas[1];
 
 if (!pais) {
-  console.log('Falta el país. Ejemplo:  node descargar-rappi.js argentina prueba');
+  console.log('Falta el país. Ejemplo:  node descargar-rappi.js argentina 2026-06-01 2026-06-17 [prueba]');
+  process.exit(1);
+}
+
+if (!desde || !hasta) {
+  console.log('Faltan fechas. Hay que indicar AMBAS en formato YYYY-MM-DD (desde y hasta).');
+  console.log('Ejemplo:  node descargar-rappi.js argentina 2026-06-01 2026-06-17 [prueba]');
+  process.exit(1);
+}
+
+if (desde > hasta) {
+  console.log(`Rango inválido: "desde" (${desde}) es posterior a "hasta" (${hasta}).`);
   process.exit(1);
 }
 
@@ -255,35 +277,7 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
     process.exit(1);
   }
 
-  // ─── DIAGNÓSTICO TEMPORAL ─────────────────────────────────
-  // Objetivo: confirmar qué campo del JSON es "Valor a transferir" y en qué
-  // formato viene "Fecha del pago" (paid_date), ANTES de cambiar el filtro.
-  // Quitar este bloque una vez confirmados los nombres/formatos reales.
-  {
-    console.log('\n═══ DIAGNÓSTICO DE CAMPOS (muestra por marca) ═══');
-    const marcasVistas = new Set();
-    for (const p of pagosCapturados) {
-      const marca = p.brand_name ?? '?';
-      if (marcasVistas.has(marca)) continue;
-      marcasVistas.add(marca);
-      const numericos = Object.entries(p)
-        .filter(([, v]) => typeof v === 'number')
-        .map(([k, v]) => `${k}=${v}`);
-      const fechas = Object.entries(p)
-        .filter(([k]) => /date|fecha/i.test(k))
-        .map(([k, v]) => `${k}=${JSON.stringify(v)} (typeof ${typeof v})`);
-      console.log(`\n── Marca: ${marca} ──`);
-      console.log('  Campos numéricos:', numericos.join('  |  ') || '(ninguno)');
-      console.log('  Campos fecha:    ', fechas.join('  |  ') || '(ninguno)');
-    }
-    console.log('\n  Objeto completo de la primera fila (todos los campos y tipos):');
-    console.log(JSON.stringify(pagosCapturados[0], null, 2));
-    console.log('\n═══ FIN DIAGNÓSTICO — no se descargó nada. ═══');
-    await browser.close();
-    process.exit(0);
-  }
-
-  // ─── Detectar campos clave ────────────────────────────────
+  // ─── Detectar campo ID (necesario para la descarga) ──────
   const primera = pagosCapturados[0];
   console.log('Claves del primer ítem:', Object.keys(primera).join(', '));
 
@@ -292,34 +286,56 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
     ?? Object.keys(primera).find(k => /^lot_id$/i.test(k))
     ?? Object.keys(primera).find(k => /^id$/i.test(k));
 
-  const campoEstado =
-    Object.keys(primera).find(k => /^status$/i.test(k))
-    ?? Object.keys(primera).find(k => /^estado$/i.test(k))
-    ?? Object.keys(primera).find(k => /status|estado|state/i.test(k));
-
-  if (!campoId || !campoEstado) {
-    console.log('No se pudo detectar campo ID o estado. Claves:', Object.keys(primera));
+  if (!campoId) {
+    console.log('No se pudo detectar campo ID. Claves:', Object.keys(primera));
     await browser.close();
     process.exit(1);
   }
 
-  console.log(`Campo ID: "${campoId}"  |  Campo estado: "${campoEstado}"`);
-  console.log('Estados únicos:', [...new Set(pagosCapturados.map(p => p[campoEstado]))].join(', '));
+  console.log(`Campo ID: "${campoId}"`);
+
+  // ─── Filtro: paid_date dentro de [desde, hasta] y total !== 0 ──────
+  // paid_date viene como "YYYY-MM-DD" (sin hora ni zona horaria), así que la
+  // comparación lexicográfica de strings coincide con el orden cronológico.
+  // total = "Valor a transferir": se incluyen positivos Y negativos; solo se
+  // excluye total exactamente 0.
+  console.log(`\nFiltrando: paid_date entre ${desde} y ${hasta} (inclusive) y total !== 0`);
 
   let pagados = pagosCapturados.filter(p => {
-    const estado = String(p[campoEstado] ?? '').toLowerCase();
-    return estado.includes('pagado') || estado.includes('paid') || estado.includes('completed');
+    const id = p[campoId];
+    const marca = p.brand_name ?? '?';
+    const paidDate = typeof p.paid_date === 'string' ? p.paid_date.slice(0, 10) : null;
+    const total = Number(p.total);
+
+    if (!paidDate) {
+      console.log(`  SALTEADA ${id} ${marca} sin paid_date`);
+      return false;
+    }
+    if (!Number.isFinite(total)) {
+      console.log(`  SALTEADA ${id} ${marca} sin total numérico (total=${JSON.stringify(p.total)})`);
+      return false;
+    }
+    if (paidDate < desde || paidDate > hasta) {
+      console.log(`  SALTEADA ${id} ${marca} paid_date=${paidDate} fuera de rango`);
+      return false;
+    }
+    if (total === 0) {
+      console.log(`  SALTEADA ${id} ${marca} total=0`);
+      return false;
+    }
+    console.log(`  INCLUIDA ${id} ${marca} paid_date=${paidDate} total=${total}`);
+    return true;
   });
 
-  console.log(`Pagos "Pagado": ${pagados.length} de ${pagosCapturados.length} totales`);
+  console.log(`\nIncluidos: ${pagados.length} de ${pagosCapturados.length} pagos capturados.`);
 
-  if (modo === 'prueba') {
+  if (modoPrueba) {
     pagados = pagados.slice(0, 3);
     console.log(`MODO PRUEBA: solo los primeros ${pagados.length} pagos.`);
   }
 
   if (pagados.length === 0) {
-    console.log('No hay pagos con estado "Pagado". Revisá los estados únicos arriba.');
+    console.log('No hay pagos que cumplan el filtro (rango de fechas + total !== 0).');
     await browser.close();
     process.exit(0);
   }
