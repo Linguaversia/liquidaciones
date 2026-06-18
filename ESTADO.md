@@ -1,6 +1,6 @@
 # Estado del Proyecto — Liquidaciones
 
-**Fecha de última actualización:** 2026-06-17 (PedidosYa: modo reintentar por IDs + clasificación de locales sin liquidaciones; Rappi: nuevos criterios de Finanzas + diagnóstico de campos en progreso)
+**Fecha de última actualización:** 2026-06-18 (Rappi: generación por POST directo con access_token — criterios nuevos de Finanzas operativos, sin dependencia de la tabla paginada)
 
 ---
 
@@ -59,37 +59,32 @@ Saltea la obtención de la lista completa del endpoint `/contracts` y procesa so
 - Sesión guardada en: `./sesiones/mercadopago-argentina/sesion.json`
 - MercadoPago no aplica para Chile (solo argentina por ahora).
 
-### Rappi — DESCARGA CORRECTA · CAMBIO DE CRITERIOS EN PROGRESO
+### Rappi — FUNCIONA (Argentina)
 
-- El motor navega a Financiero, amplía el período a "Últimos 30 días", captura los pagos vía el endpoint `paid-lot/by-stores`, genera los reportes XLS en Fase 1 y los descarga interceptando la red en Fase 2.
-- Probado con una sola marca activa: descarga funciona correctamente (~19-21 KB por archivo XLS).
-- **Pendiente:** verificar el flujo completo cuando la cuenta tiene múltiples marcas (el selector de marcas está implementado pero no se ha podido probar en producción con una cuenta multi-marca real).
+- El motor navega a Financiero, amplía el período a "Últimos 30 días", captura los pagos vía el endpoint `paid-lot/by-stores`, **genera los reportes XLS por POST directo en Fase 1** y los descarga interceptando la red en Fase 2.
+- **Criterios nuevos de Finanzas operativos** (reemplazan al viejo filtro de Estado "Pagado"): se descarga una fila **si y solo si** `paid_date` cae dentro del rango `[desde, hasta]` (inclusive ambos extremos) **Y** `total` (Valor a transferir) es distinto de exactamente 0 (positivos y negativos sí; solo se saltea el 0).
+- **Parámetros:** `node descargar-rappi.js argentina <desde> <hasta>` con ambas fechas obligatorias en formato `YYYY-MM-DD`. Sin las fechas aborta con error claro (no asume período por defecto — hay dinero de por medio). El flag `prueba` se detecta en cualquier posición (limita a los primeros 3 pagos).
+- **Validado end-to-end (2026-06-18):** la compuerta del POST dio HTTP 200 y se generaron + descargaron 3/3 reportes con `total ≠ 0` dentro del rango.
+- **Cadencia:** correr **cada miércoles** (día de pago de Rappi).
 - Sesión guardada en: `./sesiones/rappi-argentina.json`
 
-#### 🚧 Trabajo en curso — nuevos criterios de descarga (Finanzas, Argentina)
+#### Fase 1 por POST directo (elimina la dependencia de la tabla paginada)
 
-Finanzas **redefinió** qué filas se descargan. El criterio nuevo reemplaza al actual de Estado "Pagado":
+Antes, Fase 1 buscaba cada pago **como una fila en la tabla visual** y clickeaba "Descargar relación de ventas". Esto fallaba ("no visible en tabla") para todos los pagos fuera de la página actual: la tabla tiene **hasta 115 páginas**, así que en una corrida real se perderían la mayoría de los pagos.
 
-- **Descargar una fila si y solo si** se cumplen AMBAS condiciones:
-  1. La columna **"Fecha del pago"** (`paid_date`) cae dentro de un **rango desde/hasta** (inclusive ambos extremos) que el usuario indica al correr el script.
-  2. La columna **"Valor a transferir"** es **distinta de exactamente $0** (se descargan montos positivos Y negativos; solo se saltea el $0 exacto).
-- **Se ELIMINA** el filtro por columna "Estado" (ya no se usa "Pagado" para nada).
-- **NO** se usa "Periodo de venta" como criterio (varía entre tiendas).
-- **Se mantiene** sin cambios: iteración por todas las marcas, ampliar la vista a "Últimos 30 días", y todo el mecanismo de descarga (Fase 1 generar + Fase 2 interceptar).
-- **Cadencia:** correr **cada miércoles** (día de pago de Rappi).
-- **Parámetros nuevos:** dos fechas obligatorias en formato `YYYY-MM-DD`. Ej: `node descargar-rappi.js argentina 2026-06-17 2026-06-18` (un solo día: ambas iguales). Sin las fechas debe abortar con error claro (no asumir período por defecto — error grave con dinero de por medio). El flag `prueba` se detectará en cualquier posición.
+Ahora Fase 1 **genera cada reporte con un POST directo** al endpoint, usando los IDs (`paid_lot_id`) que ya tenemos en memoria del endpoint `paid-lot/by-stores`. No depende de la tabla, ni de la paginación, ni de navegar al detalle:
 
-**Estado actual de la implementación:**
+```
+POST https://services.rappi.com/rests-partners-gateway/cauth/api/partner-report/v1/report?country=AR
+body JSON: { "paid_lot_id": <id>, "type": "RESTAURANT" }
+```
 
-- ⚠️ Hay un bloque de **DIAGNÓSTICO TEMPORAL** agregado en `descargar-rappi.js` (vuelca los campos del JSON del endpoint y termina sin descargar nada). **Todavía NO se pudo correr** porque la sesión de Rappi expiró.
-- El **filtro nuevo aún NO está implementado**. El script sigue con el filtro viejo de Estado "Pagado" (que quedará reemplazado).
+Una **compuerta dura** prueba el POST con 1 pago primero y solo sigue con el resto si devuelve 2xx; si falla, vuelca status+body y aborta sin generar nada.
 
-**PENDIENTE (en orden):**
+#### Pendiente
 
-1. Renovar sesión: `node login-rappi.js argentina`.
-2. Correr el diagnóstico: `node descargar-rappi.js argentina`.
-3. Identificar **contra la pantalla de Rappi** cuál campo del JSON corresponde a "Valor a transferir" (hay varios montos posibles; `total` es solo la hipótesis) y confirmar el **formato de `paid_date`** (ISO/timestamp vs. DD/MM/YYYY de pantalla).
-4. Recién después: implementar el filtro nuevo (rango de `paid_date` + valor ≠ 0) y **quitar el bloque de diagnóstico temporal**.
+- **Prueba multi-marca:** el selector de marcas está implementado y la captura de pagos itera por todas, pero no se probó en producción con una cuenta de 2+ marcas reales.
+- **Paginación de la pestaña Reportes (Fase 2):** la descarga sigue buscando el archivo en la lista de *Reportes* por nombre; con muchos reportes esa lista podría paginar. No observado aún; revisar si aparece en la corrida completa.
 
 ### Panel web — FUNCIONA
 
@@ -230,16 +225,21 @@ Abre el navegador en `partners.rappi.com/login`. Hacé login (correo + contrase�
 
 **Paso B — Descargar liquidaciones**
 
-```
-# Prueba: solo los primeros 3 pagos
-node descargar-rappi.js argentina prueba
+Ambas fechas (`<desde>` `<hasta>`) son **obligatorias** en formato `YYYY-MM-DD`. Sin ellas el script aborta con error (no asume período por defecto).
 
-# Producción: todos los pagos del período
-node descargar-rappi.js argentina
+```
+# Prueba: solo los primeros 3 pagos del rango
+node descargar-rappi.js argentina 2026-06-17 2026-06-17 prueba
+
+# Producción: todos los pagos del rango
+node descargar-rappi.js argentina 2026-06-17 2026-06-17
+
+# Un rango de varios días
+node descargar-rappi.js argentina 2026-06-11 2026-06-17
 ```
 
 El script ejecuta dos fases:
-- **Fase 1:** Navega a Financiero > Resumen, amplía el período a "Últimos 30 días", localiza cada pago "PAID" en la tabla, abre su detalle y cliquea "Descargar relación de ventas" para que el servidor genere el XLS.
+- **Fase 1:** Navega a Financiero > Resumen, amplía el período a "Últimos 30 días", captura los pagos del endpoint `paid-lot/by-stores`, filtra por `paid_date` en rango + `total ≠ 0`, y **genera cada reporte con un POST directo** (`partner-report/v1/report`, con el `access_token` de localStorage). Ya no busca filas en la tabla ni navega al detalle.
 - **Fase 2:** Va a la pestaña Reportes, intercepta la descarga del XLS via `page.route()` y guarda cada archivo.
 - Guarda los archivos en `G:\Mi unidad\Liquidaciones\rappi-argentina\<fecha-de-hoy>\`.
 
@@ -304,7 +304,7 @@ Cuando algo falla, `descargar-rappi.js` genera screenshots automáticos en la ra
 |---|---|---|
 | PedidosYa | ✅ **FUNCIONA** | Listo para producción. Detección automática activa (probado 108 locales Chile) |
 | Uber Eats | ✅ Parametrizado (`descargar-uber.js chile`) | Login con cuenta chilena; verificar que `login-uber.js` acepte país como argumento |
-| Rappi | — | No aplica por ahora |
+| Rappi | ✅ **FUNCIONA** (Argentina) | Argentina operativo (POST directo + criterios de Finanzas). Chile no aplica por ahora |
 | MercadoPago | — | No aplica para Chile |
 
 **Nota PedidosYa:** El script navega directo a la URL `/finance-py` sin tocar el sidebar, por lo que la diferencia de menú (Argentina tiene dos links, Chile tiene uno solo llamado "Finanzas") no afecta la automatización. La diferencia en el portal (etiqueta "ÚLTIMA" vs. orden por fecha) se resuelve automáticamente sin configuración.
@@ -348,5 +348,11 @@ GET https://services.rappi.com/rests-partners-gateway/cauth/api/partner-report/p
 ```
 Devuelve `{ total_elements, content: [...], in_progress }`. Cada ítem tiene `id` (= `paid_lot_id`), `brand_name`, `status` (`PAID` | `UNPAYABLE`), `start_date`, `end_date`, `paid_date`, `total`.
 
-### Rappi — por qué interceptamos la red en lugar de `page.goto()`
+### Rappi — generación por POST directo: token y headers (clave para el futuro)
+Fase 1 genera los reportes con `context.request.post` a `partner-report/v1/report?country=AR` (body `{ paid_lot_id, type: "RESTAURANT" }`). Dos detalles que costaron sangre y son la causa de los 403:
+
+- **Token correcto = `access_token`, NO `id_token`.** La API espera el **access token** (en `localStorage`, clave directa `access_token`, ~2364 chars). El `id_token` (token de identidad, ~1572 chars) da **403**. Usar el access_token; nunca el id_token.
+- **Headers de origen obligatorios.** El POST necesita `Origin: https://partners.rappi.com` y `Referer: https://partners.rappi.com/` (más `Accept`, `Accept-Language`, `User-Agent` real del navegador). Sin ellos, 403. No hacen falta headers `x-*` personalizados (la request real no manda ninguno).
+
+### Rappi — por qué interceptamos la red en Fase 2 en lugar de `page.goto()`
 La URL directa del reporte (`/api/partner-report/v1/report?country=AR&paid_lot_id=<ID>`) requiere el Bearer token del browser. `page.goto()` no lo incluye. La solución es ir a la pestaña Reportes, registrar un `page.route()` filtrado por `paid_lot_id`, y clickear el link del archivo — Playwright re-envía la request con todos los headers del browser via `route.fetch()`.

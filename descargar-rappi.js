@@ -340,110 +340,123 @@ fs.mkdirSync(carpetaDescargas, { recursive: true });
     process.exit(0);
   }
 
-  // ─── FASE 1: Generar los reportes XLS ────────────────────
-  console.log('\n─── FASE 1: Generando reportes XLS ───');
+  // ─── FASE 1: Generar los reportes por POST directo (sin tabla) ──────────
+  // La generación se dispara con:
+  //   POST .../partner-report/v1/report?country=<PAIS>
+  //   body JSON: { paid_lot_id: <id>, type: "RESTAURANT" }
+  // Ya tenemos todos los IDs en "pagados" (del endpoint paid-lot/by-stores),
+  // así que NO hace falta la tabla paginada, ni navegar al detalle, ni clicks.
+  console.log('\n─── FASE 1: Generando reportes por POST directo ───');
 
-  // Volver a la vista Financiero > Resumen con la primera marca activa
-  await clickFinanciero();
-  await page.waitForTimeout(2000);
-  await page.screenshot({ path: './fase1-antes.png', fullPage: false });
-  console.log('  Screenshot: ./fase1-antes.png');
+  // Auth: el SPA usa Bearer desde storage (no cookie). La API espera el
+  // ACCESS TOKEN (clave directa "access_token" en localStorage), NO el id_token
+  // (que dio 403). Preferimos access_token; fallback a otras claves conocidas y,
+  // por último, cualquier JWT (eyJ...).
+  const token = await page.evaluate(() => {
+    const dump = (s) => { const o = {}; for (let i = 0; i < s.length; i++) { const k = s.key(i); o[k] = s.getItem(k); } return o; };
+    const todas = { ...dump(localStorage), ...dump(sessionStorage) };
+    for (const clave of ['access_token', 'accessToken']) {
+      if (typeof todas[clave] === 'string' && todas[clave]) return todas[clave];
+    }
+    // Fallback: cualquier JWT, PERO nunca el id_token (es el que da 403).
+    for (const [clave, v] of Object.entries(todas)) {
+      if (/id[_-]?token/i.test(clave)) continue;
+      if (typeof v === 'string') {
+        const m = v.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
+        if (m) return m[0];
+      }
+    }
+    return null;
+  });
 
-  for (let i = 0; i < pagados.length; i++) {
+  if (!token) {
+    console.log('ERROR: no se pudo extraer el access_token de storage. No se puede generar por POST.');
+    await browser.close();
+    process.exit(1);
+  }
+  console.log(`  Token access_token OK (len ${token.length}, ${token.slice(0, 18)}...)`);
+
+  // User-agent real del navegador en uso (para que coincida con la sesión,
+  // en vez de hardcodear uno que podría no matchear la versión de Chromium).
+  const userAgent = await page.evaluate(() => navigator.userAgent);
+
+  const urlGenerar = `https://services.rappi.com/rests-partners-gateway/cauth/api/partner-report/v1/report?country=${codigoPais}`;
+  const headersPost = {
+    // Auth + formato (lo que ya teníamos)
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json',
+    // Negociación de contenido
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'es',
+    // Origen — los sospechosos nº1 del 403
+    'Origin': 'https://partners.rappi.com',
+    'Referer': 'https://partners.rappi.com/',
+    // Identidad del cliente (UA real del navegador en ejecución)
+    'User-Agent': userAgent,
+    // Client hints + fetch metadata (tal como se capturaron; no molestan)
+    'sec-ch-ua': '"Not/A)Brand";v="99", "Chromium";v="148"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-site': 'same-site',
+  };
+
+  // Dispara la generación de un pago. Devuelve { ok, status, body }.
+  const generarReporte = async (id) => {
+    const idNum = Number(id);
+    const resp = await context.request.post(urlGenerar, {
+      headers: headersPost,
+      data: { paid_lot_id: Number.isFinite(idNum) ? idNum : id, type: 'RESTAURANT' },
+    });
+    const status = resp.status();
+    let body = '';
+    try { body = (await resp.body()).toString('utf8').slice(0, 300); } catch {}
+    return { ok: status >= 200 && status < 300, status, body };
+  };
+
+  // ── COMPUERTA: verificar con UN pago antes del loop completo ──
+  const primerPago = pagados[0];
+  const primerId = primerPago[campoId];
+  console.log(`  Verificando POST con 1 pago: ID ${primerId} (${primerPago.brand_name ?? '?'})...`);
+  const prueba1 = await generarReporte(primerId);
+  if (!prueba1.ok) {
+    console.log(`  ✗ POST de prueba FALLÓ: HTTP ${prueba1.status}`);
+    console.log(`    body: ${prueba1.body}`);
+    console.log('  ABORTANDO: el POST directo no funcionó (falta auth/header o cambió el endpoint).');
+    console.log('  No se generó nada más. Revisá el status/body de arriba antes de seguir.');
+    await browser.close();
+    process.exit(1);
+  }
+  console.log(`  ✓ POST de prueba OK: HTTP ${prueba1.status}. Sigo con el resto.`);
+
+  // ── Loop por el resto de los IDs ──
+  let generados = 1; // el primero ya se generó en la compuerta
+  const fallosGen = [];
+  for (let i = 1; i < pagados.length; i++) {
     const pago = pagados[i];
     const id = pago[campoId];
     const etiqueta = `[${i + 1}/${pagados.length}] ID ${id} (${pago.brand_name ?? ''})`;
-
     try {
-      // Si la marca de este pago es distinta a la visible, cambiarla
-      // (solo si tenemos marcas conocidas y la UI lo soporta)
-      if (marcasEncontradas.length > 0 && pago.brand_name) {
-        const brandActualUI = await page.locator('[class*="brand"], [class*="selector"]')
-          .filter({ visible: true }).first().textContent({ timeout: 2000 }).catch(() => '');
-        if (brandActualUI && !brandActualUI.includes(pago.brand_name)) {
-          console.log(`  Cambiando a marca "${pago.brand_name}" para Fase 1...`);
-          try {
-            const dropBtn = page.getByText(brandActualUI.trim(), { exact: true }).filter({ visible: true }).first();
-            await dropBtn.click({ timeout: 3000 });
-            await page.waitForTimeout(800);
-            const opcion = page.getByText(pago.brand_name, { exact: true }).filter({ visible: true }).first();
-            await opcion.click({ timeout: 3000 });
-            await page.waitForTimeout(500);
-            const btnAp = page.getByRole('button', { name: /^aplicar$/i }).first();
-            if (await btnAp.isVisible({ timeout: 1500 })) await btnAp.click();
-            await page.waitForTimeout(2000);
-          } catch {}
-        }
-      }
-
-      if (!page.url().includes('financial')) {
-        await clickFinanciero();
-        await page.waitForTimeout(2000);
-      }
-
-      const celda = page.locator('td, [role="cell"]')
-        .filter({ hasText: new RegExp(`^\\s*${id}\\s*$`) }).first();
-
-      if (await celda.count() === 0) {
-        console.log(`  No visible en tabla: ${etiqueta}`);
-        if (i === 0) await page.screenshot({ path: './fase1-no-fila.png', fullPage: false });
-        continue;
-      }
-
-      const fila = celda.locator('xpath=ancestor::tr[1]').or(
-        celda.locator('xpath=ancestor::*[@role="row"][1]')
-      );
-      const btnDetalle = fila.locator('button, a[href], [role="button"]').last();
-      await btnDetalle.click({ timeout: 5000 });
-      await page.waitForTimeout(2000);
-
-      if (i === 0) {
-        await page.screenshot({ path: './fase1-detalle.png', fullPage: false });
-        console.log('  Screenshot detalle: ./fase1-detalle.png');
-      }
-
-      const candidatos = [
-        page.getByText('Descargar relación de ventas', { exact: false }),
-        page.getByRole('button', { name: /descargar relaci/i }),
-        page.getByRole('button', { name: /descargar/i }),
-        page.locator('button').filter({ hasText: /descargar/i }),
-      ];
-
-      let clickOk = false;
-      for (const loc of candidatos) {
-        try {
-          const el = loc.first();
-          if (await el.isVisible({ timeout: 2000 })) {
-            await el.click();
-            clickOk = true;
-            break;
-          }
-        } catch {}
-      }
-
-      if (clickOk) {
-        await page.waitForTimeout(1000);
-        console.log(`  Solicitado ${etiqueta}`);
+      const r = await generarReporte(id);
+      if (r.ok) {
+        generados++;
+        console.log(`  OK    ${etiqueta} -> HTTP ${r.status}`);
       } else {
-        console.log(`  Sin botón "Descargar relación de ventas" — ${etiqueta}`);
+        fallosGen.push(id);
+        console.log(`  FALLO ${etiqueta} -> HTTP ${r.status} ${r.body}`);
       }
-
-      const urlDetalle = page.url();
-      if (urlDetalle.includes('paid-lot/detalle') || !urlDetalle.includes('financial')) {
-        try { await page.goBack({ waitUntil: 'networkidle', timeout: 10000 }); } catch {}
-      } else {
-        try {
-          const btnCerrar = page.getByRole('button', { name: /cerrar|close|volver|back/i }).first();
-          if (await btnCerrar.isVisible({ timeout: 1500 })) await btnCerrar.click();
-        } catch {}
-      }
-      await page.waitForTimeout(1000);
-
     } catch (err) {
-      console.log(`  Error ${etiqueta}: ${err.message.split('\n')[0]}`);
+      fallosGen.push(id);
+      console.log(`  ERROR ${etiqueta}: ${err.message.split('\n')[0]}`);
     }
   }
 
+  console.log(`\n  Reportes solicitados: ${generados}/${pagados.length}.`);
+  if (fallosGen.length) console.log('  IDs que fallaron la generación:', fallosGen.join(', '));
+
+  // El reporte sigue siendo asíncrono: hay que esperar a que se procese antes
+  // de que aparezca para descargar en Fase 2.
   const esperaSegundos = Math.max(20, pagados.length * 4);
   console.log(`\nEsperando ${esperaSegundos}s para que los reportes se procesen...`);
   await page.waitForTimeout(esperaSegundos * 1000);
