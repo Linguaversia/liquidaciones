@@ -62,6 +62,56 @@ const PLATAFORMA_PAIS = Object.fromEntries(
   SECCIONES.flatMap(({ titulo, ids }) => ids.map(id => [id, titulo.toLowerCase()]))
 );
 
+// ── Verificación de integridad país-config (defensa en profundidad) ──────────
+// Al arrancar, valida que el país horneado en los args de cada plataforma
+// coincida con el país de su sección (SECCIONES). Cierra el riesgo de
+// mantenimiento: una edición futura que descalce "país visible" (sección) vs
+// "país descargado" (args) sin que nada lo note. Con liquidaciones, un descalce
+// de país silencioso es inaceptable → si algo no cuadra, el panel NO levanta el
+// servidor. (Mismo criterio que la guardia dura del script.)
+const PAISES_CONOCIDOS = new Set([
+  'argentina', 'chile', 'uruguay', 'colombia', 'peru', 'mexico', 'brasil',
+]);
+
+function validarConfigPaises() {
+  const errores = [];
+
+  for (const { titulo, ids } of SECCIONES) {
+    const paisSeccion = titulo.toLowerCase();
+    for (const id of ids) {
+      const cfg = PLATAFORMAS[id];
+
+      // (a) la sección referencia un id que no existe en PLATAFORMAS
+      if (!cfg) {
+        errores.push(`"${id}" está en la sección ${titulo} pero no existe en PLATAFORMAS.`);
+        continue;
+      }
+
+      // (b) país horneado en args vs país de la sección.
+      // Match EXACTO de token (no substring): 'descargar-rappi.js' nunca matchea
+      // 'argentina'; solo un arg que SEA un nombre de país cuenta.
+      const paisesEnArgs = (cfg.args || [])
+        .filter(a => PAISES_CONOCIDOS.has(String(a).toLowerCase()));
+      for (const p of paisesEnArgs) {
+        if (p.toLowerCase() !== paisSeccion) {
+          errores.push(
+            `"${id}" está en la sección ${titulo} pero sus args dicen "${p}" ` +
+            `(args: ${JSON.stringify(cfg.args)}).`
+          );
+        }
+      }
+    }
+  }
+
+  if (errores.length) {
+    console.error('\n✗ Config de país inconsistente — el panel NO arranca:');
+    for (const e of errores) console.error('  • ' + e);
+    console.error('\nRevisá PLATAFORMAS/SECCIONES en panel.js: el país de los args debe coincidir con la sección.');
+    process.exit(1);
+  }
+  console.log('✓ Config de país coherente (args ↔ sección) en todas las plataformas.');
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 const EXTS_VALIDAS = new Set(['.zip', '.xlsx', '.csv', '.xls']);
 const ES_FECHA = /^\d{4}-\d{2}-\d{2}$/;   // formato estricto (cierra inyección por shell:true)
@@ -384,6 +434,7 @@ app.post('/api/descargar/:plataforma', (req, res) => {
 app.use('/descargas', express.static(CARPETA_DESCARGAS));
 
 // ── Iniciar ──────────────────────────────────────────────────────────────────
+validarConfigPaises();   // aborta si la config de país es inconsistente
 app.listen(PORT, () => {
   console.log(`Panel listo en http://localhost:${PORT}`);
 });
