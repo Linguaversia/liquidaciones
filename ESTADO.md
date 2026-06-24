@@ -1,6 +1,6 @@
 # Estado del Proyecto — Liquidaciones
 
-**Fecha de última actualización:** 2026-06-24 (Rappi: blindaje de país en 3 capas —autocorrección del selector + guardia dura `country=` + coherencia de URL, exit 3— para prevenir descargas cruzadas entre países; validado en corrida real con autocorrección Colombia→Argentina, 192/192 descargados)
+**Fecha de última actualización:** 2026-06-24 (Rappi: blindaje de país en 3 capas —autocorrección del selector + guardia dura `country=` + coherencia de URL, exit 3— validado en corrida real con autocorrección Colombia→Argentina, 192/192. Panel: verificación de arranque país-config —args ↔ sección— que aborta si descalzan, cerrando el riesgo de mantenimiento panel→script)
 
 ---
 
@@ -135,6 +135,7 @@ Tres capas de defensa en profundidad:
 - Muestra historial de archivos descargados ordenado por fecha de modificación.
 - **Fechas por plataforma:** Uber Eats y Mercado Pago tienen `desde`/`hasta` **opcionales** (`fechasOpcionales`); **Rappi** las tiene **obligatorias** (`fechasRequeridas`) con aviso visual "Fechas obligatorias". El frontend exige ambas antes de mandar el POST; el backend responde 400 si faltan. Esto **arregló el botón de Rappi, que estaba roto** (el script ahora exige dos fechas y el botón las mandaba vacías). PedidosYa no usa fechas.
 - **Seguridad:** validación de formato estricto `YYYY-MM-DD` (regex `ES_FECHA`) en el backend antes del `spawn`, **compartida por todas las plataformas** → cierra la superficie de inyección del `shell:true` (las fechas del date-picker siempre pasan; solo se rechazan valores malformados). 400 si el formato no matchea.
+- **Verificación de arranque país-config (`validarConfigPaises()`):** al levantar el panel valida, por cada plataforma, que el país horneado en sus `args` coincida con el país de su sección (`SECCIONES`/`PLATAFORMA_PAIS`), con match exacto contra un set de países conocidos. Si alguno descalza (o una sección referencia un ID inexistente), **el panel NO arranca**: lista todos los errores y aborta (`exit 1`). Cierra el **riesgo de mantenimiento del descalce panel→script**: una edición futura de la config que ponga una plataforma bajo el país equivocado se detecta al arrancar, no en silencio. MercadoPago (sin arg de país, mono-país) pasa por diseño. Esto **completa las tres capas de blindaje de país**: (1) selector visual del panel + (2) verificación de arranque del panel + (3) guardia dura del script (`country=` del portal ↔ argumento recibido, exit 3).
 - Descarga de archivos desde el historial vía `/descargas/...`.
 
 ---
