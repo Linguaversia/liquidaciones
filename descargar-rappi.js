@@ -193,6 +193,97 @@ let browser;
     process.exit(1);
   }
 
+  // ─── #2: asegurar que el portal esté en el país pedido ANTES de capturar ────
+  // Lee el selector de país (arriba a la derecha). Si detecta un país distinto,
+  // lo cambia, espera que recargue el endpoint, REINICIA los acumuladores (tira
+  // datos del país viejo) y re-verifica. Si detecta país equivocado y no puede
+  // cambiarlo → aborta (exit 3). Si no logra LEER el selector → no aborta: avisa
+  // y se apoya en la guardia dura #1. Falla ruidosa, como el resto del motor.
+  const NOMBRE_PAIS = {
+    argentina: 'Argentina', chile: 'Chile', uruguay: 'Uruguay',
+    colombia: 'Colombia', peru: 'Perú', mexico: 'México',
+  };
+  const objetivoPais = NOMBRE_PAIS[pais] ?? pais;
+  const RX_PAIS = /^\s*(Argentina|Chile|Uruguay|Colombia|Per[uú]|M[eé]xico|Brasil|Ecuador|Costa Rica)\s*$/i;
+
+  // Busca un elemento visible cuyo texto sea EXACTAMENTE un nombre de país
+  // (descarta marcas/ciudades como "Club Del Poke - Barranquilla").
+  const leerPaisActual = async () => {
+    const loc = page.getByText(RX_PAIS).filter({ visible: true });
+    const n = await loc.count().catch(() => 0);
+    for (let i = 0; i < n; i++) {
+      const t = (await loc.nth(i).innerText().catch(() => '')).trim();
+      if (RX_PAIS.test(t)) return { texto: t, loc: loc.nth(i) };
+    }
+    return { texto: null, loc: null };
+  };
+
+  const asegurarPais = async () => {
+    await page.screenshot({ path: './diag-pais-selector.png', fullPage: false }).catch(() => {});
+    const actual = await leerPaisActual();
+
+    if (!actual.texto) {
+      console.log('  ⚠ No pude leer el selector de país visualmente; me apoyo en la guardia dura #1.');
+      return;
+    }
+    if (actual.texto.toLowerCase() === objetivoPais.toLowerCase()) {
+      console.log(`  País del portal OK: "${actual.texto}".`);
+      return;
+    }
+
+    // País equivocado: intentar cambiarlo. Si no se confirma → abortar.
+    console.log(`  País del portal: "${actual.texto}" — se requiere "${objetivoPais}". Cambiando...`);
+    await actual.loc.click({ timeout: 5000 }).catch(async () => {
+      await actual.loc.locator('xpath=ancestor-or-self::*[self::button or @role="button"][1]')
+        .first().click({ timeout: 5000 });
+    });
+    await page.waitForTimeout(1200);
+    await page.screenshot({ path: './diag-pais-dropdown.png', fullPage: false }).catch(() => {});
+
+    const opcion = page.getByText(new RegExp(`^\\s*${objetivoPais}\\s*$`, 'i'))
+      .filter({ visible: true }).last();
+    if (!await opcion.isVisible({ timeout: 4000 }).catch(() => false)) {
+      throw new Error(`el selector no abrió o no apareció la opción "${objetivoPais}"`);
+    }
+
+    // Cambiar país recarga la SPA: esperamos el endpoint, tiramos lo del país
+    // viejo y re-entramos a Financiero para capturar fresco el país nuevo.
+    const esperaResp = page.waitForResponse(
+      r => r.url().includes('paid-lot/by-stores'), { timeout: 20000 }
+    ).catch(() => null);
+    await opcion.click({ timeout: 5000 });
+    const confirmar = page.getByRole('button', { name: /^(aplicar|confirmar|continuar|guardar|aceptar)$/i })
+      .filter({ visible: true }).first();
+    if (await confirmar.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await confirmar.click({ timeout: 4000 }).catch(() => {});
+    }
+    todosLosPagos.length = 0;        // descartar pagos del país viejo
+    llamadasEndpoint.length = 0;     // descartar llamadas del país viejo
+    await esperaResp;
+    await page.waitForTimeout(3000);
+    await clickFinanciero();
+    await page.waitForTimeout(2000);
+
+    // Re-verificar que ahora sí muestra el país objetivo.
+    const verif = await leerPaisActual();
+    await page.screenshot({ path: './diag-pais-post.png', fullPage: false }).catch(() => {});
+    if (!(verif.texto && verif.texto.toLowerCase() === objetivoPais.toLowerCase())) {
+      throw new Error(`no pude confirmar el cambio a "${objetivoPais}" (sigue en "${verif.texto ?? 'desconocido'}")`);
+    }
+    console.log(`  País del portal cambiado y confirmado: "${verif.texto}".`);
+  };
+
+  try {
+    await asegurarPais();
+  } catch (err) {
+    console.log(`\n⚠ No se pudo asegurar el país del portal: ${err.message.split('\n')[0]}`);
+    console.log('  ABORTANDO para no descargar liquidaciones cruzadas. Renová la sesión');
+    console.log(`  asegurándote de elegir ${objetivoPais} en el selector (arriba a la derecha).`);
+    await page.screenshot({ path: './diag-pais-error.png', fullPage: false }).catch(() => {});
+    await browser.close();
+    process.exit(3);
+  }
+
   // ─── Paso 2: Ampliar el período a "Últimos 30 días" ──────
   try {
     const periodoDropdown = page.getByText('Últimos 7 días').first();
@@ -350,6 +441,39 @@ let browser;
     process.exit(1);
   }
 
+  // ─── GUARDIA DURA #1: el país del portal DEBE coincidir con el pedido ───────
+  // Red de seguridad final e innegociable. El country= que viajó en la request
+  // REAL del navegador (llamadaTodas.url) tiene que ser el mismo que pedimos por
+  // CLI (codigoPais). Si el portal quedó en otro país (p.ej. el selector saltó a
+  // Colombia al renovar la sesión), ABORTAMOS antes de paginar/generar/descargar.
+  // Corre SIEMPRE, aunque #2 haya intentado autocorregir: jamás se baja cruzado.
+  const paisDeUrl = (url) => {
+    try { return new URL(url).searchParams.get('country'); } catch { return null; }
+  };
+  const paisPortal = paisDeUrl(llamadaTodas.url);
+  if (paisPortal && paisPortal.toUpperCase() !== codigoPais.toUpperCase()) {
+    console.log(`\n⚠ DESCALCE DE PAÍS: el portal está en "${paisPortal}" pero pediste "${codigoPais}".`);
+    console.log('  El selector de país de Rappi quedó en otro país. Renová la sesión');
+    console.log(`  asegurándote de elegir ${objetivoPais}, o dejá que el script lo cambie (#2).`);
+    console.log('  ABORTANDO para no descargar liquidaciones cruzadas.');
+    await browser.close();
+    process.exit(3);
+  }
+  if (!paisPortal) {
+    console.log('  ⚠ No pude leer el country= de la request interceptada; me apoyo en la verificación visual (#2).');
+  }
+  console.log(`\n✓ País solicitado: ${objetivoPais} (${codigoPais}) | País del portal: ${paisPortal ?? '?'} ✓`);
+
+  // ─── #3: forzar country=codigoPais en la URL de captura ─────────────────────
+  // La captura NO debe heredar el país del portal: lo forzamos a codigoPais para
+  // que captura, generación y descarga hablen todas el MISMO país. Con #1 y #2 ya
+  // validados es redundante, pero cierra el agujero de raíz (defensa en profundidad).
+  const forzarPais = (url, code) => {
+    try { const u = new URL(url); u.searchParams.set('country', code); return u.toString(); }
+    catch { return url; }
+  };
+  const urlCaptura = forzarPais(llamadaTodas.url, codigoPais);
+
   const bodyBase = { ...llamadaTodas.body };
   delete bodyBase.page; delete bodyBase.size;   // los seteamos por página
   // Fechas: ventana amplia del portal; SOLO ensanchar para cubrir [desde,hasta],
@@ -363,7 +487,7 @@ let browser;
     const items = [];
     let total = null;
     for (let page = 0; page <= 500; page++) {              // tope de seguridad
-      const resp = await context.request.post(llamadaTodas.url, {
+      const resp = await context.request.post(urlCaptura, {
         headers: headersPost,
         data: { ...bodyBase, page, size },
       });
