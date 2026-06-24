@@ -1,6 +1,6 @@
 # Estado del Proyecto — Liquidaciones
 
-**Fecha de última actualización:** 2026-06-18 (Panel: fechas obligatorias para Rappi —arregla el botón roto— + validación de formato; Rappi: detección de sesión vencida con mensaje claro + exit 2 y red de seguridad anti-crash)
+**Fecha de última actualización:** 2026-06-24 (Rappi: blindaje de país en 3 capas —autocorrección del selector + guardia dura `country=` + coherencia de URL, exit 3— para prevenir descargas cruzadas entre países; validado en corrida real con autocorrección Colombia→Argentina, 192/192 descargados)
 
 ---
 
@@ -111,7 +111,23 @@ Apenas navega (antes de toda la captura), `estadoSesion()` hace una **carrera co
 ```
 y termina con **exit 2**, en vez del stack crudo de Node. Una **red de seguridad** (`.catch` en la IIFE principal) captura cualquier otra excepción imprevista y la imprime como una línea legible (en vez del stack), cerrando el navegador.
 
-**Códigos de salida:** `0` OK · `1` error genérico (faltan fechas, captura fallida, etc.) · `2` sesión vencida (accionable). Pensado para que el futuro servidor/panel mapee el 2 a un mensaje propio para Finanzas.
+**Códigos de salida:** `0` OK · `1` error genérico (faltan fechas, captura fallida, etc.) · `2` sesión vencida (accionable) · `3` descalce de país (el portal está en un país distinto al pedido). Pensado para que el servidor/panel mapee `2` y `3` a mensajes propios para Finanzas.
+
+#### Blindaje de país (3 capas — previene descargas cruzadas entre países)
+
+**Causa raíz:** la cuenta de Rappi tiene acceso a varios países (Argentina, Colombia, …). Al **renovar la sesión**, el portal puede quedar con **otro país seleccionado** en el selector de arriba a la derecha (ej. Colombia), y `rappi-argentina.json` guarda ese estado **aunque el nombre del archivo diga "argentina"**. Si el portal queda en Colombia pero se pide `country=AR`, se descargarían liquidaciones **cruzadas** sin avisar — inaceptable con dinero. Detectado en una corrida real (aparecieron marcas como "Club Del Poke - Barranquilla").
+
+Tres capas de defensa en profundidad:
+
+- **#2 — Autocorrección del selector** (antes de capturar): lee el selector de país del portal. Si no es el país pedido, lo cambia, **resetea los acumuladores** (`todosLosPagos` / `llamadasEndpoint`, para descartar datos del país viejo), re-entra a Financiero y **re-verifica**. Aborta (exit 3) si detecta país equivocado y **no puede** cambiarlo; si **no logra leer** el selector (p. ej. renderiza solo la bandera) **solo avisa** y se apoya en #1. Deja screenshots `diag-pais-*.png`.
+- **#1 — Guardia dura (siempre activa)** (antes de paginar/generar/descargar): compara el `country=` de la request **real** interceptada (`llamadaTodas.url`) contra el país pedido (`codigoPais`); **aborta con exit 3** si descalzan. Es la **red final infalible**: aunque #2 quede ciego o falle en silencio, jamás se baja cruzado. Imprime `✓ País solicitado: Argentina (AR) | País del portal: AR ✓`.
+- **#3 — Coherencia de URL:** fuerza `country=codigoPais` en la URL de captura paginada en vez de heredar el del portal, para que captura, generación y descarga hablen **todas el mismo país**.
+
+> **Reseteo de acumuladores (clave):** sin él, el listener acumula las llamadas del país viejo y `llamadaTodas` (elegida por más `stores_ids`) podría quedarse con la del país equivocado.
+
+> **Nota panel/servidor:** el selector de país del panel debe coincidir con el país descargado. El blindaje en el script lo garantiza **venga de donde venga** el pedido (panel, CLI, cron).
+
+**Validado end-to-end (2026-06-24):** corrida real con el portal en **Colombia** → #2 lo detectó, lo cambió a **Argentina** solo, #1 confirmó, **192/192 descargados**.
 
 ### Panel web — FUNCIONA
 
@@ -325,6 +341,7 @@ G:\Mi unidad\Liquidaciones\          ← Google Drive (sincronizado, compartido 
 Cuando algo falla, `descargar-rappi.js` genera screenshots automáticos en la raíz:
 - `diagnostico-rappi.png` — estado de la pantalla si no se captura el endpoint
 - `diag-marcas-dropdown.png` / `diag-marcas-todas.png` / `diag-marcas-error.png` — selector "Todas las marcas"
+- `diag-pais-selector.png` / `diag-pais-dropdown.png` / `diag-pais-post.png` / `diag-pais-error.png` — blindaje de país (#2): estado del selector, dropdown abierto, post-cambio y error
 
 Nota: Fase 1 (generación) y Fase 2 (descarga) ya no usan la tabla ni la pestaña Reportes (van por POST/GET directo por ID), así que no generan screenshots; los errores se reportan por consola (IDs con fallo) y las compuertas abortan ante el primer fallo.
 
@@ -347,7 +364,7 @@ Nota: Fase 1 (generación) y Fase 2 (descarga) ya no usan la tabla ni la pestañ
 
 ### Prioritario
 
-- [ ] **Rappi — validar camino feliz del detector de sesión (mañana 2026-06-19):** con la sesión renovada (`node login-rappi.js argentina`), confirmar que `estadoSesion()` deja pasar (gana "Financiero") y sigue la captura normal. El caso de **sesión vencida ya quedó validado hoy** (mensaje claro + exit 2). Pendiente solo el camino feliz porque hoy no se pudo renovar la sesión.
+- [x] **Rappi — camino feliz del detector de sesión:** validado en la corrida del 2026-06-24 (sesión renovada → `estadoSesion()` dejó pasar y la captura corrió completa, 192/192). El caso de sesión vencida ya estaba validado (mensaje claro + exit 2).
 - [ ] **Uber — formato XLSX:** el portal entrega CSV por defecto. Investigar si el formulario tiene selector de formato o si se configura en el perfil de la cuenta. Ver `UBER-DEBUGGING-LOG.md` sección 5.
 - [ ] **Manejo de sesión expirada (otros motores):** Rappi ya detecta sesión vencida (carrera login-vs-panel + exit 2). PedidosYa / Uber / MercadoPago todavía fallan de forma poco clara si la sesión expira — replicar un detector equivalente en cada uno.
 - [ ] **Chile — verificar `login-uber.js`:** confirmar que acepta país como argumento (o adaptarlo) antes de tener el acceso chileno.
