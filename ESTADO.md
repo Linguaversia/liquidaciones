@@ -369,6 +369,7 @@ Nota: Fase 1 (generación) y Fase 2 (descarga) ya no usan la tabla ni la pestañ
 - [ ] **Uber — formato XLSX:** el portal entrega CSV por defecto. Investigar si el formulario tiene selector de formato o si se configura en el perfil de la cuenta. Ver `UBER-DEBUGGING-LOG.md` sección 5.
 - [ ] **Manejo de sesión expirada (otros motores):** Rappi ya detecta sesión vencida (carrera login-vs-panel + exit 2). PedidosYa / Uber / MercadoPago todavía fallan de forma poco clara si la sesión expira — replicar un detector equivalente en cada uno.
 - [ ] **Chile — verificar `login-uber.js`:** confirmar que acepta país como argumento (o adaptarlo) antes de tener el acceso chileno.
+- [ ] **Rappi — falla intermitente en el primer intento ("no se capturó el endpoint"):** el panel a veces falla el primer intento de Rappi con "no se capturó el endpoint" y funciona al reintentar. No es sesión vencida ni descalce de país. Investigar la causa (timing de carga del portal / arranque desde el panel) antes del salto al servidor, donde no habrá reintento manual.
 
 > Nota: la **prueba multi-marca de Rappi** quedó resuelta (corrida real con "Todas" → 575 tiendas / 1715 pagos, 194/194 descargados).
 
