@@ -6,7 +6,7 @@ const path = require('path');
 const { CARPETA_DESCARGAS } = require('./config');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3001;
 
 app.use(express.json());
 
